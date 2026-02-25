@@ -1,10 +1,10 @@
-﻿# CalcDocs — Formula Hover & Go to Definition
+# CalcDocs — Formula Hover & Go to Definition
 
 Formula navigation and evaluation for YAML engineering formulas and C/C++ constants inside Visual Studio Code.
 
 ![CalcDocs Demo](https://raw.githubusercontent.com/mik1981/convergo.calcdocs/main/resources/CalcDocs_Refresh.gif)
 
-![CalcDocs Demo](https://raw.githubusercontent.com/mik1981/convergo.calcdocs/main/resources/CalcDocs_Definition.gif)
+![CalcDocs Screeshot](https://raw.githubusercontent.com/mik1981/convergo.calcdocs/main/resources/CalcDocs_Definition.jpg)
 
 CalcDocs helps firmware, embedded, and software teams keep **technical formulas, documentation, and source code aligned** directly inside the editor.
 
