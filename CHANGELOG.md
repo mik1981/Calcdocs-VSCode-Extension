@@ -1,7 +1,11 @@
-# Changelog
+# ✨ Changelog
 
 ## 0.1.0
-- Prima versione pubblica
-- Refresh formule
-- Write-back valori
-- Migliorato parsing formule
+- First public release
+- Formula refresh
+- Value write-back
+- Improved formula parsing
+
+## 0.1.3
+- Support for VSCode 1.109
+- Added CodeLens to extract the effective value from complex `#define` statements

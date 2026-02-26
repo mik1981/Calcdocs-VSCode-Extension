@@ -1,41 +1,121 @@
-# CalcDocs — Formula Hover & Go to Definition
+# 🧮 CalcDocs - Formula Hover, Definition and C/C++ Sync
 
-Formula navigation and evaluation for YAML engineering formulas and C/C++ constants inside Visual Studio Code.
+Formula navigation and evaluation for YAML engineering formulas and C/C++ constants directly inside Visual Studio Code.
 
-![CalcDocs Demo](https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/resources/CalcDocs_Refresh.gif)
+![CalcDocs Demo](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Refresh.gif)
+![CalcDocs Screenshot](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Definition.jpg)
 
-![CalcDocs Screeshot](https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/resources/CalcDocs_Definition.jpg)
+CalcDocs helps firmware, embedded, and software teams keep formulas, documentation, and source constants aligned.
 
-CalcDocs helps firmware, embedded, and software teams keep **technical formulas, documentation, and source code aligned** directly inside the editor.
+- GitHub project: [Calcdocs-VSCode-Extension](https://github.com/mik1981/Calcdocs-VSCode-Extension/)
+- Issues: [Open an issue](https://github.com/mik1981/Calcdocs-VSCode-Extension/issues)
+
+## 📑 Index
+
+- [Install from `.vsix` File (Quick Guide)](#install-from-vsix-file-quick-guide)
+- [Features](#features)
+- [Commands](#commands)
+- [Configuration](#configuration)
+- [File Scanning Rules](#file-scanning-rules)
+- [Quick Example](#quick-example)
+- [Contributing](#contributing)
+- [Sponsor](#sponsor)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ---
 
-## ✨ Features
+## 📦 Install from `.vsix` File (Quick Guide)
 
-- Hover over formula symbols in **YAML, C, and C++** files
-- **Go to Definition** for:
-  - formula keys defined in `formulas*.yaml` / `formulas*.yml`
-  - numeric `#define` and `const` symbols in C/C++
-- Formula expansion using known values
-- Automatic refresh of YAML formulas
-- Numeric evaluation when a formula can be fully resolved
-- Automatic update of YAML fields (`dati` and `value`)
-- Periodic background analysis of the workspace
-- Quick refresh command available in the status bar
+If you already have the file `calcdocs-vscode-extension-0.1.3.vsix`, you can install it without using the Marketplace.
+
+**Graphical method (recommended):**
+
+1. Open **Visual Studio Code**.
+2. Go to the **Extensions** view (left sidebar icon or press `Ctrl+Shift+X`).
+3. Click the three dots `...` at the top of the Extensions panel.
+4. Select **Install from VSIX...**.
+5. Choose the `.vsix` file and confirm.
+6. Restart VS Code.
+
+**Terminal method (optional):**
+
+```bash
+code --install-extension calcdocs-vscode-extension-0.1.3.vsix
+```
+
+**Verify the installation:**
+
+1. Open the Command Palette (`Ctrl+Shift+P`).
+2. Search for `CalcDocs: Forza aggiornamento formule`.
+3. If the command is visible, the extension has been installed correctly.
 
 ---
 
-## ⚡ Quick Example
+## 🚀 Features
 
-Example YAML formula file:
+- C/C++ source files always remain under your control; the extension only flags potential misalignments.
+- Hover on formula symbols in YAML files.
+- Optional fallback hover/definition providers for C/C++ (`calcdocs.enableCppProviders`).
+- Go to definition for:
+  - keys defined in `formula*.yaml` / `formulas*.yml`
+  - `#define` and `const` symbols found in C/C++ files
+- Formula expansion with known symbol values.
+- Numeric evaluation when expressions can be fully resolved.
+- Recursive resolution of complex C/C++ definitions (`#define` and `const` with dependencies).
+- C/C++ CodeLens for composite definitions with computed numeric values.
+- Mismatch detection between C/C++ constants and YAML computed values (warning lens when difference is significant).
+- YAML write-back of `dati` and `value` fields on refresh.
+- Status bar quick refresh and periodic background analysis.
+
+---
+
+## ⌨️ Commands
+
+| Command | What it does |
+| --- | --- |
+| `CalcDocs: Forza aggiornamento formule` | Rebuilds index, recalculates formulas, and writes back YAML (`dati`, `value`) |
+| `CalcDocs: Imposta intervallo scansione` | Sets periodic scan interval in seconds (`0` disables periodic scan/watchers) |
+| Status bar button `CalcDocs` | Manual quick refresh |
+
+---
+
+## ⚙️ Configuration
+
+Available workspace settings:
+
+- `calcdocs.scanInterval` (number, default `0`)
+- `calcdocs.ignoredDirs` (string array, folders excluded from analysis)
+- `calcdocs.enableCppProviders` (boolean, default `false`, keeps C/C++ tools as primary)
+
+---
+
+## 🔍 File Scanning Rules
+
+Formula files:
+
+- `formula*.yaml`
+- `formula*.yml`
+- `formulas*.yaml`
+- `formulas*.yml`
+
+Code files:
+
+- `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.hh`
+
+Activation events:
+
+- `onStartupFinished`
+- `onLanguage:yaml`
+
+---
+
+## 🧪 Quick Example
 
 ```yaml
 MAX_SPEED:
   formula: RPM * WHEEL_RADIUS * 0.10472
   unit: m/s
-  steps:
-    - Read RPM from sensor
-    - Convert RPM to rad/s
   value: 12.5
 
 RPM:
@@ -44,61 +124,13 @@ RPM:
 WHEEL_RADIUS:
   value: 0.2
 ```
-When hovering on MAX_SPEED or RPM, CalcDocs provides:
-- expanded formula
-- current values
-- navigation to symbol definition
 
----
+```c
+#define SPEED_LIMIT_FACTOR (RPM / 2 + 10)
+const int MAX_SPEED = SPEED_LIMIT_FACTOR * 2;
+```
 
-## 🧠 Commands
-
-### Command	Description
-CalcDocs: Force formula refresh	Rebuilds the formula index and updates YAML values
-CalcDocs: Set scan interval	Configures periodic background analysis
-Status bar refresh	Quick manual refresh of formulas
-
----
-
-## 📂 File Scanning Rules
-
-Supported formula files:
-- formula*.yaml
-- formulas*.yml
-
-Supported code files:
-- .c
-- .h
-- .cpp
-- .hpp
-
-Customizable ignored folders
-Extension activation occurs when opening a YAML file in the workspace.
-
----
-
-## 🚀 Why CalcDocs
-
-CalcDocs is useful when engineering formulas, documentation, and source code constants must stay synchronized.
-
-It helps teams:
-- reduce context switching
-- quickly understand formulas
-- navigate between documentation and code
-- debug engineering calculations faster
-
----
-
-## 🔎 Keywords
-
-- vscode
-- yaml formulas
-- engineering formulas
-- embedded development
-- c/cpp constants
-- formula evaluation
-- hover documentation
-- go to definition
+CalcDocs can expand and resolve these symbols, show computed values in hover/CodeLens, and navigate to their definitions.
 
 ---
 
@@ -106,30 +138,29 @@ It helps teams:
 
 Contributions are welcome, especially for:
 
-parser improvements
-
+- parser improvements
 - diagnostics
-- testing
+- tests
 - developer experience
 
 ---
 
 ## ❤️ Sponsor
 
-If you find this extension useful, consider sponsoring the project to support its development.
+If you find this extension useful, consider sponsoring the project.
 
 [![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.me/gianmichelepasinelli)
 
 ---
 
-## 📌 Roadmap
+## 🗺️ Roadmap
 
 Planned improvements:
+
 - YAML schema validation
-- more robust expression parsing
-- automated tests for YAML write-back
+- stronger expression parsing
+- more automated tests for YAML write-back
 - configurable include/exclude paths
-- improved multi-root workspace support
 
 ---
 

@@ -1,0 +1,7 @@
+VEL:
+  dati: 5 * 4
+  formula: 5 * MUL
+  steps: 
+    - prende 5
+    - lo moltiplica per MUL estratto da test.c
+  value: 20
