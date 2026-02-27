@@ -9,3 +9,6 @@
 ## 0.1.3
 - Support for VSCode 1.109
 - Added CodeLens to extract the effective value from complex `#define` statements
+
+## 0.1.4
+- Extended CodeLens to all C files

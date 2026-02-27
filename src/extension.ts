@@ -325,6 +325,45 @@ async function runAnalysis(root: string) {
     }
 
     if (!ymlPath) {
+      // Nessun YAML: continua comunque l’analisi C/C++
+      if (files.length > 0) {
+        const { defines, consts, locations } = await collectDefinesAndConsts(files, root);
+
+        allDefines.clear();
+        symbolValues.clear();
+        symbolDefs.clear();
+
+        // Valori da #define numerici
+        for (const [name, expr] of defines) {
+          try {
+            const numeric = safeEval(expr);
+            symbolValues.set(name, numeric);
+            allDefines.set(name, expr);
+          } catch {
+            // define non numerico: lo teniamo comunque per expandExpression
+            allDefines.set(name, expr);
+          }
+        }
+
+        // Valori da const TYPE NAME = NNN;
+        for (const [key, val] of consts) {
+          symbolValues.set(key, val);
+        }
+
+        // Location delle define/const
+        for (const [key, loc] of locations) {
+          symbolDefs.set(key, loc);
+        }
+
+        // NON cancellare formulaIndex qui → permette mismatch detection minima
+        output.appendLine(`[CalcDocs] Nessun formulas*.yaml, ma analisi C/C++ completata (${symbolValues.size} valori)`);
+
+        updateStatusBar(); // anche se YAML non c’è, la barra non deve sparire
+      }
+
+      return;  // Esci, ma senza resettare tutto
+    }
+/*     if (!ymlPath) {
       formulaIndex.clear();
       symbolValues.clear();
       symbolDefs.clear();
@@ -332,7 +371,7 @@ async function runAnalysis(root: string) {
       updateStatusBar();
       return;
     }
-
+ */
     // Carica YAML
     let rawText = "";
     let yml: any;
