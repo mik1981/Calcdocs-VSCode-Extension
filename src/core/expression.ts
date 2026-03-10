@@ -7,6 +7,11 @@ export type EvaluationContext = {
   csvTables?: CsvTableMap;
 };
 
+export type FunctionMacroDefinition = {
+  params: string[];
+  body: string;
+};
+
 type IdentifierMeta = {
   prevChar: string;
   nextChar: string;
@@ -20,8 +25,60 @@ type EvalScopeValue =
 
 const DEG_TO_RAD = Math.PI / 180;
 const RAD_TO_DEG = 180 / Math.PI;
+const MAX_MACRO_EXPANSION_DEPTH = 12;
+// Hard stop for recursive symbol resolution to avoid JS stack overflow.
+const MAX_SYMBOL_RESOLUTION_DEPTH = 96;
+const MAX_CYCLE_SAMPLES = 10;
+const SIMPLIFY_MAX_PASSES = 4;
+const NUMERIC_MUL_DIV_CHAIN_RX =
+  /(?<![A-Za-z0-9_.$])[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?(?:\s*[*/]\s*[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)+(?![A-Za-z0-9_])/g;
+
+function toFiniteNumber(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+
+  return numeric;
+}
+
+function toUintN(value: unknown, bits: number): number {
+  const modulo = 2 ** bits;
+  const truncated = Math.trunc(toFiniteNumber(value));
+  return ((truncated % modulo) + modulo) % modulo;
+}
+
+function toIntN(value: unknown, bits: number): number {
+  const unsigned = toUintN(value, bits);
+  const signBit = 2 ** (bits - 1);
+  const modulo = 2 ** bits;
+  return unsigned >= signBit ? unsigned - modulo : unsigned;
+}
+
+const C_CAST_SCOPE: Record<string, EvalScopeValue> = {
+  UINT8: (value: unknown) => toUintN(value, 8),
+  UINT16: (value: unknown) => toUintN(value, 16),
+  UINT32: (value: unknown) => toUintN(value, 32),
+  INT8: (value: unknown) => toIntN(value, 8),
+  INT16: (value: unknown) => toIntN(value, 16),
+  INT32: (value: unknown) => toIntN(value, 32),
+  uint8_t: (value: unknown) => toUintN(value, 8),
+  uint16_t: (value: unknown) => toUintN(value, 16),
+  uint32_t: (value: unknown) => toUintN(value, 32),
+  int8_t: (value: unknown) => toIntN(value, 8),
+  int16_t: (value: unknown) => toIntN(value, 16),
+  int32_t: (value: unknown) => toIntN(value, 32),
+  int: (value: unknown) => toIntN(value, 32),
+  short: (value: unknown) => toIntN(value, 16),
+  long: (value: unknown) => toIntN(value, 32),
+  unsigned: (value: unknown) => toUintN(value, 32),
+  float: (value: unknown) => toFiniteNumber(value),
+  double: (value: unknown) => toFiniteNumber(value),
+  bool: (value: unknown) => (toFiniteNumber(value) === 0 ? 0 : 1),
+};
 
 const BASE_MATH_SCOPE: Record<string, EvalScopeValue> = {
+  ...C_CAST_SCOPE,
   Math,
   abs: Math.abs,
   acos: Math.acos,
@@ -82,6 +139,54 @@ const RESERVED_IDENTIFIERS = new Set<string>([
   "Infinity",
   "NaN",
 ]);
+
+export type SymbolResolutionStats = {
+  // Current recursive depth while traversing dependencies.
+  currentDepth: number;
+  // Highest depth reached in the whole analysis pass.
+  maxDepth: number;
+  // Configured hard limit used by guards.
+  depthLimit: number;
+  // Circular references detected during resolution.
+  cycleCount: number;
+  // Number of branches stopped by depth guard.
+  depthLimitHits: number;
+  // Unique samples of circular dependency chains, e.g. A -> B -> A.
+  cycleSamples: string[];
+};
+
+export type SymbolResolutionSnapshot = {
+  usedDepth: number;
+  depthLimit: number;
+  cycleCount: number;
+  prunedCount: number;
+  degraded: boolean;
+};
+
+export function createSymbolResolutionStats(
+  depthLimit = MAX_SYMBOL_RESOLUTION_DEPTH
+): SymbolResolutionStats {
+  return {
+    currentDepth: 0,
+    maxDepth: 0,
+    depthLimit,
+    cycleCount: 0,
+    depthLimitHits: 0,
+    cycleSamples: [],
+  };
+}
+
+export function snapshotSymbolResolutionStats(
+  stats: SymbolResolutionStats
+): SymbolResolutionSnapshot {
+  return {
+    usedDepth: stats.maxDepth,
+    depthLimit: stats.depthLimit,
+    cycleCount: stats.cycleCount,
+    prunedCount: stats.depthLimitHits,
+    degraded: stats.cycleCount > 0 || stats.depthLimitHits > 0,
+  };
+}
 
 function addUppercaseAliases(
   scope: Record<string, EvalScopeValue>
@@ -669,6 +774,319 @@ function findFunctionCallEnd(expr: string, openParenIndex: number): number {
   return -1;
 }
 
+function splitCallArguments(argText: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let depth = 0;
+
+  for (let i = 0; i < argText.length; i += 1) {
+    const char = argText[i];
+
+    if (char === '"' || char === "'" || char === "`") {
+      const quote = char;
+      current += char;
+      i += 1;
+
+      while (i < argText.length) {
+        const inner = argText[i];
+        current += inner;
+        if (inner === "\\") {
+          i += 1;
+          if (i < argText.length) {
+            current += argText[i];
+          }
+          i += 1;
+          continue;
+        }
+
+        if (inner === quote) {
+          break;
+        }
+
+        i += 1;
+      }
+
+      continue;
+    }
+
+    if (char === "(") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+
+    if (char === ")") {
+      if (depth > 0) {
+        depth -= 1;
+      }
+
+      current += char;
+      continue;
+    }
+
+    if (char === "," && depth === 0) {
+      args.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  const trailing = current.trim();
+  if (trailing.length > 0 || argText.trim().length > 0) {
+    args.push(trailing);
+  }
+
+  return args;
+}
+
+function replaceMacroParameter(body: string, parameter: string, value: string): string {
+  return body.replace(new RegExp(`\\b${parameter}\\b`, "g"), value);
+}
+
+function formatPreviewNumber(value: number): string {
+  if (Object.is(value, -0)) {
+    return "0";
+  }
+
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+
+  const rounded = Number(value.toFixed(6));
+  return Object.is(rounded, -0) ? "0" : String(rounded);
+}
+
+function isReducibleNumericFragment(fragment: string): boolean {
+  const trimmed = fragment.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (/[A-Za-z_]/.test(trimmed)) {
+    return false;
+  }
+
+  return /^[0-9+\-*/%()\s.eE]+$/.test(trimmed);
+}
+
+function simplifyNumericFragments(expr: string, context: EvaluationContext): string {
+  let output = expr;
+
+  for (let pass = 0; pass < SIMPLIFY_MAX_PASSES; pass += 1) {
+    let changed = false;
+
+    output = output.replace(
+      /\(([^()]+)\)/g,
+      (group, inner: string, offset: number, source: string) => {
+        if (!isReducibleNumericFragment(inner)) {
+          return group;
+        }
+
+        try {
+          const value = safeEval(inner, context);
+          changed = true;
+          const formatted = formatPreviewNumber(value);
+          const prefix = source.slice(0, offset);
+          const castPrefixMatch = prefix.match(
+            /\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*$/
+          );
+
+          return castPrefixMatch ? `(${formatted})` : formatted;
+        } catch {
+          return group;
+        }
+      }
+    );
+
+    output = output.replace(NUMERIC_MUL_DIV_CHAIN_RX, (segment) => {
+      if (!isReducibleNumericFragment(segment)) {
+        return segment;
+      }
+
+      try {
+        const value = safeEval(segment, context);
+        changed = true;
+        return formatPreviewNumber(value);
+      } catch {
+        return segment;
+      }
+    });
+
+    if (!changed) {
+      break;
+    }
+  }
+
+  return output;
+}
+
+function expandFunctionLikeMacrosInExpression(
+  expr: string,
+  functionDefines: Map<string, FunctionMacroDefinition>,
+  symbolValues: Map<string, number>,
+  defines: Map<string, string>,
+  resolved: Map<string, number>,
+  context: EvaluationContext,
+  depth = 0,
+  stackStats: SymbolResolutionStats = createSymbolResolutionStats(),
+  resolving: Set<string> = new Set<string>(),
+  defineConditions: Map<string, string> = new Map<string, string>(),
+  activeCondition: string | null = null
+): string {
+  if (!expr || functionDefines.size === 0 || depth >= MAX_MACRO_EXPANSION_DEPTH) {
+    return expr;
+  }
+
+  let output = "";
+
+  for (let i = 0; i < expr.length; ) {
+    const char = expr[i];
+
+    if (char === '"' || char === "'" || char === "`") {
+      const quote = char;
+      const start = i;
+      i += 1;
+
+      while (i < expr.length) {
+        const current = expr[i];
+        if (current === "\\") {
+          i += 2;
+          continue;
+        }
+
+        i += 1;
+        if (current === quote) {
+          break;
+        }
+      }
+
+      output += expr.slice(start, i);
+      continue;
+    }
+
+    if (!isIdentifierStartChar(char)) {
+      output += char;
+      i += 1;
+      continue;
+    }
+
+    const tokenStart = i;
+    i += 1;
+    while (i < expr.length && isIdentifierPartChar(expr[i])) {
+      i += 1;
+    }
+
+    const token = expr.slice(tokenStart, i);
+    const macro = functionDefines.get(token);
+    if (!macro) {
+      output += token;
+      continue;
+    }
+
+    let openParenIndex = i;
+    while (openParenIndex < expr.length && isWhitespaceChar(expr[openParenIndex])) {
+      openParenIndex += 1;
+    }
+
+    if (expr[openParenIndex] !== "(") {
+      output += token;
+      continue;
+    }
+
+    const callEnd = findFunctionCallEnd(expr, openParenIndex);
+    if (callEnd < 0) {
+      output += token;
+      continue;
+    }
+
+    const rawArgs = expr.slice(openParenIndex + 1, callEnd - 1);
+    const parsedArgs = splitCallArguments(rawArgs);
+    if (parsedArgs.length !== macro.params.length) {
+      output += expr.slice(tokenStart, callEnd);
+      i = callEnd;
+      continue;
+    }
+
+    const expandedArgs = parsedArgs.map((argument) => {
+      const expandedArgument = expandFunctionLikeMacrosInExpression(
+        argument,
+        functionDefines,
+        symbolValues,
+        defines,
+        resolved,
+        context,
+        depth + 1,
+        stackStats,
+        resolving,
+        defineConditions,
+        activeCondition
+      );
+
+      return replaceIdentifiersOutsideStrings(expandedArgument, (identifier, meta) => {
+        if (meta.prevChar === ".") {
+          return identifier;
+        }
+
+        if (symbolValues.has(identifier)) {
+          return String(symbolValues.get(identifier));
+        }
+
+        if (RESERVED_IDENTIFIERS.has(identifier) || meta.nextChar === "(") {
+          return identifier;
+        }
+
+        const value = resolveSymbol(
+          identifier,
+          defines,
+          functionDefines,
+          resolved,
+          symbolValues,
+          context,
+          stackStats,
+          resolving,
+          defineConditions,
+          activeCondition
+        );
+        if (value == null) {
+          return identifier;
+        }
+
+        return String(value);
+      });
+    });
+
+    let expandedBody = macro.body;
+    for (let argIndex = 0; argIndex < macro.params.length; argIndex += 1) {
+      expandedBody = replaceMacroParameter(
+        expandedBody,
+        macro.params[argIndex],
+        `(${expandedArgs[argIndex]})`
+      );
+    }
+
+    expandedBody = expandFunctionLikeMacrosInExpression(
+      expandedBody,
+      functionDefines,
+      symbolValues,
+      defines,
+      resolved,
+      context,
+      depth + 1,
+      stackStats,
+      resolving,
+      defineConditions,
+      activeCondition
+    );
+
+    output += `(${expandedBody})`;
+    i = callEnd;
+  }
+
+  return output;
+}
+
 /**
  * Resolves inline CSV/table lookup calls into numeric literals.
  * Example: csv("ntc.csv","25","temp_c","r","linear") -> 10000
@@ -803,6 +1221,220 @@ export function safeEval(expr: string, context: EvaluationContext = {}): number 
   return value;
 }
 
+function normalizeConditionExpression(condition: string | null | undefined): string {
+  const trimmed = (condition ?? "").trim();
+  if (!trimmed || trimmed === "1" || trimmed.toLowerCase() === "always") {
+    return "always";
+  }
+
+  return trimmed;
+}
+
+function compactConditionExpression(condition: string): string {
+  return condition.replace(/\s+/g, "");
+}
+
+function stripOuterConditionParens(condition: string): string {
+  let output = condition.trim();
+
+  while (output.startsWith("(") && output.endsWith(")")) {
+    let depth = 0;
+    let wrapsWholeExpression = true;
+
+    for (let i = 0; i < output.length; i += 1) {
+      const char = output[i];
+      if (char === "(") {
+        depth += 1;
+        continue;
+      }
+
+      if (char === ")") {
+        depth -= 1;
+        if (depth < 0) {
+          wrapsWholeExpression = false;
+          break;
+        }
+
+        if (depth === 0 && i < output.length - 1) {
+          wrapsWholeExpression = false;
+          break;
+        }
+      }
+    }
+
+    if (!wrapsWholeExpression || depth !== 0) {
+      break;
+    }
+
+    output = output.slice(1, -1).trim();
+  }
+
+  return output;
+}
+
+function splitTopLevelAndConditions(condition: string): string[] {
+  const trimmed = condition.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const char = trimmed[i];
+
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (depth === 0 && trimmed[i] === "&" && trimmed[i + 1] === "&") {
+      const chunk = trimmed.slice(start, i).trim();
+      if (chunk.length > 0) {
+        parts.push(chunk);
+      }
+
+      i += 1;
+      start = i + 1;
+    }
+  }
+
+  const trailing = trimmed.slice(start).trim();
+  if (trailing.length > 0) {
+    parts.push(trailing);
+  }
+
+  return parts.length > 0 ? parts : [trimmed];
+}
+
+function negateConditionExpression(condition: string): string {
+  const normalized = normalizeConditionExpression(condition);
+  if (normalized === "always") {
+    return "0";
+  }
+
+  if (normalized === "0") {
+    return "always";
+  }
+
+  const trimmed = normalized.trim();
+  if (trimmed.startsWith("!(") && trimmed.endsWith(")")) {
+    const inner = trimmed.slice(2, -1).trim();
+    return inner || "always";
+  }
+
+  return `!(${normalized})`;
+}
+
+function mergeConditionExpressions(
+  parentCondition: string | null,
+  currentCondition: string
+): string {
+  const normalizedParent = normalizeConditionExpression(parentCondition);
+  const normalizedCurrent = normalizeConditionExpression(currentCondition);
+
+  if (normalizedParent === "always") {
+    return normalizedCurrent;
+  }
+
+  if (normalizedCurrent === "always") {
+    return normalizedParent;
+  }
+
+  if (normalizedParent === normalizedCurrent) {
+    return normalizedParent;
+  }
+
+  return `(${normalizedParent}) && (${normalizedCurrent})`;
+}
+
+function conditionsCanOverlap(
+  leftCondition: string | null,
+  rightCondition: string | null
+): boolean {
+  const normalizedLeft = normalizeConditionExpression(leftCondition);
+  const normalizedRight = normalizeConditionExpression(rightCondition);
+
+  if (normalizedLeft === "always" || normalizedRight === "always") {
+    return true;
+  }
+
+  const compactLeft = compactConditionExpression(normalizedLeft);
+  const compactRight = compactConditionExpression(normalizedRight);
+  if (!compactLeft || !compactRight) {
+    return true;
+  }
+
+  if (compactLeft === compactRight) {
+    return true;
+  }
+
+  const compactLeftNegated = compactConditionExpression(
+    negateConditionExpression(normalizedLeft)
+  );
+  const compactRightNegated = compactConditionExpression(
+    negateConditionExpression(normalizedRight)
+  );
+
+  if (compactLeft === compactRightNegated || compactRight === compactLeftNegated) {
+    return false;
+  }
+
+  if (
+    compactLeft.includes(`!(${compactRight})`) ||
+    compactRight.includes(`!(${compactLeft})`)
+  ) {
+    return false;
+  }
+
+  const leftTerms = splitTopLevelAndConditions(normalizedLeft).map((term) =>
+    stripOuterConditionParens(term)
+  );
+  const rightTerms = splitTopLevelAndConditions(normalizedRight).map((term) =>
+    stripOuterConditionParens(term)
+  );
+
+  for (const leftTerm of leftTerms) {
+    const compactLeftTerm = compactConditionExpression(leftTerm);
+    if (!compactLeftTerm) {
+      continue;
+    }
+
+    const compactLeftTermNegated = compactConditionExpression(
+      stripOuterConditionParens(negateConditionExpression(compactLeftTerm))
+    );
+
+    for (const rightTerm of rightTerms) {
+      const compactRightTerm = compactConditionExpression(rightTerm);
+      if (!compactRightTerm) {
+        continue;
+      }
+
+      const compactRightTermNegated = compactConditionExpression(
+        stripOuterConditionParens(negateConditionExpression(compactRightTerm))
+      );
+
+      if (
+        compactLeftTerm === compactRightTermNegated ||
+        compactRightTerm === compactLeftTermNegated ||
+        compactLeftTerm.includes(`!(${compactRightTerm})`) ||
+        compactRightTerm.includes(`!(${compactLeftTerm})`)
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 /**
  * Replaces identifier tokens with known numeric values.
  * Example: replaceTokens("A+B", {A:2}) -> "2+B"
@@ -837,9 +1469,14 @@ export function replaceTokens(
 export function resolveSymbol(
   name: string,
   defines: Map<string, string>,
+  functionDefines: Map<string, FunctionMacroDefinition>,
   resolved: Map<string, number>,
   symbolValues: Map<string, number>,
-  context: EvaluationContext = {}
+  context: EvaluationContext = {},
+  stackStats: SymbolResolutionStats = createSymbolResolutionStats(),
+  resolving: Set<string> = new Set<string>(),
+  defineConditions: Map<string, string> = new Map<string, string>(),
+  activeCondition: string | null = null
 ): number | null {
   if (resolved.has(name)) {
     return resolved.get(name) ?? null;
@@ -859,30 +1496,120 @@ export function resolveSymbol(
     return null;
   }
 
-  const expr = defines.get(name) ?? "";
-  const tokens = expr.match(TOKEN_RX) ?? [];
-  let expanded = expr;
+  const normalizedActiveCondition = normalizeConditionExpression(activeCondition);
+  const symbolCondition = normalizeConditionExpression(defineConditions.get(name));
 
-  for (const token of tokens) {
-    if (token === name) {
-      continue;
-    }
-
-    const resolvedToken = resolveSymbol(token, defines, resolved, symbolValues, context);
-    if (resolvedToken == null) {
-      continue;
-    }
-
-    expanded = expanded.replace(new RegExp(`\\b${token}\\b`, "g"), String(resolvedToken));
+  // Without a concrete preprocessor context, conditional-only symbols are unsafe to
+  // resolve numerically because they can pull in mutually-exclusive branches.
+  if (symbolCondition !== "always" && normalizedActiveCondition === "always") {
+    return null;
   }
 
+  if (!conditionsCanOverlap(normalizedActiveCondition, symbolCondition)) {
+    return null;
+  }
+
+  const nextCondition = mergeConditionExpressions(
+    normalizedActiveCondition,
+    symbolCondition
+  );
+
+  if (resolving.has(name)) {
+    stackStats.cycleCount += 1;
+
+    const resolvingChain = Array.from(resolving);
+    const cycleStartIndex = resolvingChain.indexOf(name);
+    const cycleNodes =
+      cycleStartIndex >= 0
+        ? resolvingChain.slice(cycleStartIndex)
+        : resolvingChain;
+    const cycleSample = [...cycleNodes, name].join(" -> ");
+
+    if (
+      cycleSample &&
+      stackStats.cycleSamples.length <= MAX_CYCLE_SAMPLES &&
+      !stackStats.cycleSamples.includes(cycleSample)
+    ) {
+      if (stackStats.cycleSamples.length < MAX_CYCLE_SAMPLES) {
+        stackStats.cycleSamples.push(cycleSample);
+      }
+      else {
+        stackStats.cycleSamples.push("[...]");
+      }
+    }
+
+    return null;
+  }
+
+  if (stackStats.currentDepth >= stackStats.depthLimit) {
+    stackStats.depthLimitHits += 1;
+    return null;
+  }
+
+  resolving.add(name);
+  stackStats.currentDepth += 1;
+  stackStats.maxDepth = Math.max(stackStats.maxDepth, stackStats.currentDepth);
+
+  const expr = defines.get(name) ?? "";
   try {
+    let expanded = expandFunctionLikeMacrosInExpression(
+      expr,
+      functionDefines,
+      symbolValues,
+      defines,
+      resolved,
+      context,
+      0,
+      stackStats,
+      resolving,
+      defineConditions,
+      nextCondition
+    );
+    const tokens = expanded.match(TOKEN_RX) ?? [];
+
+    for (const token of tokens) {
+      if (token === name) {
+        continue;
+      }
+
+      const tokenCondition = normalizeConditionExpression(
+        defineConditions.get(token)
+      );
+      if (!conditionsCanOverlap(nextCondition, tokenCondition)) {
+        continue;
+      }
+
+      const resolvedToken = resolveSymbol(
+        token,
+        defines,
+        functionDefines,
+        resolved,
+        symbolValues,
+        context,
+        stackStats,
+        resolving,
+        defineConditions,
+        nextCondition
+      );
+      if (resolvedToken == null) {
+        continue;
+      }
+
+      expanded = expanded.replace(
+        new RegExp(`\\b${token}\\b`, "g"),
+        String(resolvedToken)
+      );
+    }
+
     const value = safeEval(expanded, context);
     resolved.set(name, value);
     symbolValues.set(name, value);
     return value;
   } catch {
     return null;
+  } finally {
+    stackStats.currentDepth = Math.max(0, stackStats.currentDepth - 1);
+    resolving.delete(name);
   }
 }
 
@@ -893,16 +1620,42 @@ export function resolveSymbol(
 export function expandExpression(
   expr: string,
   defines: Map<string, string>,
+  functionDefines: Map<string, FunctionMacroDefinition>,
   resolved: Map<string, number>,
   symbolValues: Map<string, number>,
-  context: EvaluationContext = {}
+  context: EvaluationContext = {},
+  stackStats: SymbolResolutionStats = createSymbolResolutionStats(),
+  defineConditions: Map<string, string> = new Map<string, string>()
 ): string {
-  return replaceIdentifiersOutsideStrings(expr, (token, meta) => {
+  const functionExpanded = expandFunctionLikeMacrosInExpression(
+    expr,
+    functionDefines,
+    symbolValues,
+    defines,
+    resolved,
+    context,
+    0,
+    stackStats,
+    new Set<string>(),
+    defineConditions
+  );
+
+  return replaceIdentifiersOutsideStrings(functionExpanded, (token, meta) => {
     if (meta.prevChar === ".") {
       return token;
     }
 
-    const value = resolveSymbol(token, defines, resolved, symbolValues, context);
+    const value = resolveSymbol(
+      token,
+      defines,
+      functionDefines,
+      resolved,
+      symbolValues,
+      context,
+      stackStats,
+      new Set<string>(),
+      defineConditions
+    );
     if (value == null) {
       return token;
     }
@@ -947,6 +1700,91 @@ export function isCompositeExpression(
 }
 
 /**
+ * Resolves function-like macros and known symbols, then tries to simplify numeric fragments.
+ */
+export function buildCompositeExpressionPreview(
+  expr: string,
+  symbolValues: Map<string, number>,
+  allDefines: Map<string, string>,
+  functionDefines: Map<string, FunctionMacroDefinition> = new Map(),
+  context: EvaluationContext = {},
+  defineConditions: Map<string, string> = new Map<string, string>()
+): { expanded: string; value: number | null } {
+  let expanded = stripComments(expr);
+  const resolvedMap = new Map<string, number>();
+  const stackStats = createSymbolResolutionStats();
+
+  expanded = expandFunctionLikeMacrosInExpression(
+    expanded,
+    functionDefines,
+    symbolValues,
+    allDefines,
+    resolvedMap,
+    context,
+    0,
+    stackStats,
+    new Set<string>(),
+    defineConditions
+  );
+
+  expanded = replaceIdentifiersOutsideStrings(expanded, (token, meta) => {
+    if (meta.prevChar === ".") {
+      return token;
+    }
+
+    if (symbolValues.has(token)) {
+      return String(symbolValues.get(token));
+    }
+
+    const value = resolveSymbol(
+      token,
+      allDefines,
+      functionDefines,
+      resolvedMap,
+      symbolValues,
+      context,
+      stackStats,
+      new Set<string>(),
+      defineConditions
+    );
+    if (value != null) {
+      return String(value);
+    }
+
+    if (RESERVED_IDENTIFIERS.has(token) || meta.nextChar === "(") {
+      return token;
+    }
+
+    return token;
+  });
+
+  expanded = resolveInlineLookups(expanded, context);
+  const evaluableExpanded = expanded;
+  const simplifiedExpanded = simplifyNumericFragments(evaluableExpanded, context);
+
+  try {
+    const value = safeEval(evaluableExpanded, context);
+    return {
+      expanded: simplifiedExpanded,
+      value,
+    };
+  } catch {
+    try {
+      const value = safeEval(simplifiedExpanded, context);
+      return {
+        expanded: simplifiedExpanded,
+        value,
+      };
+    } catch {
+      return {
+        expanded: simplifiedExpanded,
+        value: null,
+      };
+    }
+  }
+}
+
+/**
  * Computes numeric value for composite expressions after token resolution.
  * Returns null when unresolved identifiers remain.
  */
@@ -954,35 +1792,16 @@ export function evaluateCompositeExpression(
   expr: string,
   symbolValues: Map<string, number>,
   allDefines: Map<string, string>,
-  context: EvaluationContext = {}
+  functionDefines: Map<string, FunctionMacroDefinition> = new Map(),
+  context: EvaluationContext = {},
+  defineConditions: Map<string, string> = new Map<string, string>()
 ): number | null {
-  try {
-    let expanded = stripComments(expr);
-    const resolvedMap = new Map<string, number>();
-
-    expanded = replaceIdentifiersOutsideStrings(expanded, (token, meta) => {
-      if (meta.prevChar === ".") {
-        return token;
-      }
-
-      if (symbolValues.has(token)) {
-        return String(symbolValues.get(token));
-      }
-
-      const value = resolveSymbol(token, allDefines, resolvedMap, symbolValues, context);
-      if (value != null) {
-        return String(value);
-      }
-
-      if (RESERVED_IDENTIFIERS.has(token) || meta.nextChar === "(") {
-        return token;
-      }
-
-      return token;
-    });
-
-    return safeEval(expanded, context);
-  } catch {
-    return null;
-  }
+  return buildCompositeExpressionPreview(
+    expr,
+    symbolValues,
+    allDefines,
+    functionDefines,
+    context,
+    defineConditions
+  ).value;
 }

@@ -1,4 +1,4 @@
-﻿import * as path from "path";
+import * as path from "path";
 import * as vscode from "vscode";
 
 import { writeBackYaml } from "../core/analysis";
@@ -6,6 +6,7 @@ import { getConfig } from "../core/config";
 import { CalcDocsState, SymbolDefinitionLocation } from "../core/state";
 import { AnalysisScheduler } from "../infra/watchers";
 import { pickWord } from "../utils/editor";
+import { localize } from "../utils/localize";
 
 type RegisterCommandsParams = {
   context: vscode.ExtensionContext;
@@ -26,6 +27,13 @@ export function registerCommands({
 }: RegisterCommandsParams): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("calcdocs.forceRefresh", async () => {
+      if (!state.enabled) {
+        await vscode.window.showWarningMessage(
+          localize("command.forceRefresh.warningDisabled")
+        );
+        return;
+      }
+
       await runAnalysisAndRefreshUi();
 
       if (state.lastYamlPath && state.lastYamlRaw) {
@@ -33,6 +41,10 @@ export function registerCommands({
       }
 
       await vscode.window.showInformationMessage("CalcDocs updated.");
+    }),
+
+    vscode.commands.registerCommand("calcdocs.showOutput", async () => {
+      state.output.show(false);
     }),
 
     vscode.commands.registerCommand("calcdocs.setScanInterval", async () => {
@@ -62,12 +74,74 @@ export function registerCommands({
       scheduler.applyConfiguration(context, getConfig());
     }),
 
+    vscode.commands.registerCommand("calcdocs.toggleEnabled", async () => {
+      const currentEnabled = getConfig().enabled;
+      const nextEnabled = !currentEnabled;
+
+      await vscode.workspace
+        .getConfiguration("calcdocs")
+        .update("enabled", nextEnabled, vscode.ConfigurationTarget.Workspace);
+
+      const stateLabel = nextEnabled ? localize("command.toggleEnabled.enabled") : localize("command.toggleEnabled.disabled");
+      await vscode.window.showInformationMessage(stateLabel);
+    }),
+
     vscode.commands.registerCommand("calcdocs.goToCounterpart", async () => {
+      if (!state.enabled) {
+        await vscode.window.showWarningMessage(
+          localize("command.goToCounterpart.warningDisabled")
+        );
+        return;
+      }
+
       await goToCounterpart(state);
     }),
 
     vscode.commands.registerCommand("calcdocs.fixMismatch", async (label: string) => {
+      if (!state.enabled) {
+        return;
+      }
+
       await openFormulaDefinition(state, label);
+    }),
+
+    vscode.commands.registerCommand("calcdocs.openTestFolder", async () => {
+
+        // URI della cartella test relativa all’estensione
+        const testFolderUri = vscode.Uri.joinPath(context.extensionUri, "test");
+        
+        // Apri la cartella come workspace
+        await vscode.commands.executeCommand(
+            "vscode.openFolder",
+            testFolderUri,
+            false   // false = apri nella stessa finestra
+        );
+
+        // 🔥 Aspetta un attimo che VS Code completi il caricamento del folder
+        setTimeout(async () => {
+            const testFileUri = vscode.Uri.joinPath(testFolderUri, "test.c");
+            await vscode.window.showTextDocument(testFileUri);
+        }, 500);
+
+
+    // const workspaceRoot = state.workspaceRoot;
+    //   if (!workspaceRoot) {
+    //     await vscode.window.showWarningMessage("No workspace folder open");
+    //     return;
+    //   }
+
+    //   const testFolderPath = path.join(workspaceRoot, "test");
+
+    //   try {
+    //     //File: Open Folder...
+    //     //workbench.action.files.openFolder
+    //     vscode.extensions.getExtension("publisher.extensionName").extensionUri
+    //     const testFolderUri = vscode.Uri.file(testFolderPath);
+    //     state.output.debug(`testFolderUri=${testFolderUri} from testFolderPath=${testFolderPath}`);
+    //     await vscode.commands.executeCommand("workbench.action.files.openFolder", testFolderUri, { forceNewWindow: false });
+    //   } catch (error) {
+    //     await vscode.window.showWarningMessage(`Could not open test folder: ${testFolderPath}`);
+    //   }
     })
   );
 }
@@ -155,7 +229,7 @@ async function pickSymbolLocation(
   }));
 
   const selected = await vscode.window.showQuickPick(picks, {
-    placeHolder: `Multiple definitions found for ${word}`,
+    placeHolder: localize("command.pickSymbol.placeholder", word),
   });
 
   return selected?.location ?? null;

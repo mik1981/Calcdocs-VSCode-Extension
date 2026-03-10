@@ -1,0 +1,209 @@
+{
+  "name": "calcdocs-vscode-extension",
+  "displayName": "CalcDocs – C/C++ Constants & Formula Evaluator",
+  "description": "%extension.description%",
+  "version": "0.1.7",
+  "publisher": "convergo-dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mik1981/Calcdocs-VSCode-Extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mik1981/Calcdocs-VSCode-Extension/issues"
+  },
+  "homepage": "https://github.com/mik1981/Calcdocs-VSCode-Extension#readme",
+  "extensionKind": [
+    "workspace"
+  ],
+  "l10n": "./l10n",
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Debuggers",
+    "Visualization",
+    "Other"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "c",
+    "c/c++",
+    "cpp",
+    "clang",
+    "macros",
+    "constants",
+    "yaml",
+    "engineering",
+    "engineering-formulas",
+    "static-analysis",
+    "const-evaluator",
+    "parser",
+    "symbols",
+    "value-preview",
+    "compute",
+    "cross-reference",
+    "goto definition",
+    "spreadsheet",
+    "microcontroller",
+    "code",
+    "code-evaluation",
+    "firmware",
+    "formula",
+    "embedded",
+    "embedded-systems",
+    "configuration tables",
+    "calculation",
+    "automation",
+    "sanity-check",
+    "vscode"
+  ],
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:c",
+    "onLanguage:cpp"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "calcdocs.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.enabled%"
+        },
+        "calcdocs.scanInterval": {
+          "type": "number",
+          "default": 0,
+          "description": "%config.scanInterval%"
+        },
+        "calcdocs.ignoredDirs": {
+          "type": "array",
+          "default": [
+            ".git",
+            ".gitHub",
+            "node_modules",
+            "dist",
+            "build",
+            "out",
+            "__pycache__",
+            ".vscode",
+            ".idea",
+            "Debug*",
+            "Release*",
+            ".vscode-test",
+            ".cache",
+            ".clangd",
+            ".settings"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "%config.ignoredDirs%"
+        },
+        "calcdocs.enableCppProviders": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.enableCppProviders%"
+        },
+        "calcdocs.resourceStatusMode": {
+          "type": "string",
+          "default": "always",
+          "enum": [
+            "always",
+            "aboveCpuThreshold"
+          ],
+          "enumDescriptions": [
+            "%config.resourceStatusMode.always%",
+            "%config.resourceStatusMode.aboveCpuThreshold%"
+          ],
+          "description": "%config.resourceStatusMode%"
+        },
+        "calcdocs.resourceCpuThreshold": {
+          "type": "number",
+          "default": 70,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "%config.resourceCpuThreshold%"
+        },
+        "calcdocs.thousandsSeparator": {
+          "type": "string",
+          "default": "apostrophe",
+          "enum": [
+            "none",
+            "space",
+            "dot",
+            "comma",
+            "apostrophe",
+            "narrowNoBreakSpace"
+          ],
+          "enumDescriptions": [
+            "%config.thousandsSeparator.none%",
+            "%config.thousandsSeparator.space%",
+            "%config.thousandsSeparator.dot%",
+            "%config.thousandsSeparator.comma%",
+            "%config.thousandsSeparator.apostrophe%",
+            "%config.thousandsSeparator.narrowNoBreakSpace%"
+          ],
+          "description": "%config.thousandsSeparator%"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "calcdocs.forceRefresh",
+        "title": "%command.forceRefresh.title%"
+      },
+      {
+        "command": "calcdocs.setScanInterval",
+        "title": "%command.setScanInterval.title%"
+      },
+      {
+        "command": "calcdocs.toggleEnabled",
+        "title": "%command.toggleEnabled.title%"
+      },
+      {
+        "command": "calcdocs.showOutput",
+        "title": "%command.showOutput.title%"
+      },
+      {
+        "command": "calcdocs.openTestFolder",
+        "title": "%command.openTestFolder.title%"
+      }
+    ],
+    "languages": [
+      {
+        "id": "yaml",
+        "extensions": [
+          ".yaml",
+          ".yml"
+        ]
+      }
+    ]
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "vscode:prepublish": "npm run build",
+    "package": "vsce package --no-dependencies",
+    "compile": "tsc -p ."
+  },
+  "icon": "resources/icon.png",
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.33",
+    "@types/vscode": "^1.109.0",
+    "@vscode/l10n-dev": "^0.0.35",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1"
+  }
+}

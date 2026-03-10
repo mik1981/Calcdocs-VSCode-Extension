@@ -1,42 +1,135 @@
-﻿import * as vscode from "vscode";
+import * as vscode from "vscode";
 
+import { type FunctionMacroDefinition } from "./expression";
 import { FormulaEntry } from "../types/FormulaEntry";
+import { type ColoredOutput } from "../utils/output";
 
+/**
+ * Posizione di una definizione di simbolo nel codice sorgente.
+ * Utilizzata per la navigazione (Go to Definition).
+ */
 export type SymbolDefinitionLocation = {
+  /** Percorso del file relativo alla root del workspace */
   file: string;
+  /** Numero di linea (0-based) dove è definito il simbolo */
   line: number;
 };
 
+/**
+ * Definizione condizionale di un simbolo (#ifdef, #ifndef, #if).
+ * Memorizza la posizione e la condizione del preprocessore.
+ */
 export type SymbolConditionalDefinition = SymbolDefinitionLocation & {
+  /** Espressione raw del define (es. "#define FOO 42") */
   expr: string;
+  /** Condizione del preprocessore (es. "defined(DEBUG)", "!defined(FOO)") */
   condition: string;
 };
 
-export type CalcDocsState = {
-  workspaceRoot: string;
-  output: vscode.OutputChannel;
-  lastYamlPath: string;
-  lastYamlRaw: string;
-  hasFormulasFile: boolean;
-  ignoredDirs: Set<string>;
-  formulaIndex: Map<string, FormulaEntry>;
-  symbolValues: Map<string, number>;
-  symbolDefs: Map<string, SymbolDefinitionLocation>;
-  symbolConditionalDefs: Map<string, SymbolConditionalDefinition[]>;
-  symbolAmbiguityRoots: Map<string, string[]>;
-  allDefines: Map<string, string>;
+/**
+ * Statistiche sull'utilizzo dello stack durante la risoluzione dei simboli.
+ * Utilizzate per diagnosticare problemi di ricorsione e prestazioni.
+ */
+export type AnalysisStackUsage = {
+  /** Profondità massima di ricorsione raggiunta durante la risoluzione dei simboli */
+  usedDepth: number;
+  /** Limite di sicurezza impostato per evitare stack overflow */
+  depthLimit: number;
+  /** Numero di dipendenze circolari rilevate (es. A -> B -> A) */
+  cycleCount: number;
+  /** Numero di risoluzioni saltate perché è stato raggiunto il limite di profondità */
+  prunedCount: number;
+  /** True se i guard di sicurezza hanno alterato il normale percorso di analisi */
+  degraded: boolean;
 };
 
 /**
- * Creates the in-memory state container shared by analysis and VS Code providers.
+ * Informazioni sull'errore di parsing del file YAML.
+ */
+export type YamlParseErrorInfo = {
+  /** Percorso assoluto del file formulas*.yaml che ha fallito il parsing */
+  yamlPath: string;
+  /** Messaggio di errore restituito dal parser js-yaml */
+  message: string;
+  /** Riga opzionale (1-based) per diagnostica del parser, quando disponibile */
+  line?: number;
+  /** Colonna opzionale (1-based) per diagnostica del parser, quando disponibile */
+  column?: number;
+};
+
+/**
+ * Stato completo dell'estensione CalcDocs per un workspace.
+ * Condiviso tra analisi e provider VSCode.
+ */
+export type CalcDocsState = {
+  /** Percorso assoluto alla cartella root del workspace */
+  workspaceRoot: string;
+  /** Canale di output per messaggi di log e diagnostica con supporto colori */
+  output: ColoredOutput;
+  /** Flag globale: true se l'estensione è abilitata, false se disabilitata */
+  enabled: boolean;
+  /** Percorso dell'ultimo file YAML analizzato */
+  lastYamlPath: string;
+  /** Contenuto raw dell'ultimo YAML parsato (per write-back) */
+  lastYamlRaw: string;
+  /** True se esiste almeno un file formulas.yaml nel workspace */
+  hasFormulasFile: boolean;
+  /** Set di directory da ignorare durante la scansione (da configurazione) */
+  ignoredDirs: Set<string>;
+  /** Mappa delle formule indicizzate: nome formula -> entry completa */
+  formulaIndex: Map<string, FormulaEntry>;
+  /** Mappa dei valori numerici risolti dei simboli: nome -> valore */
+  symbolValues: Map<string, number>;
+  /** Mappa delle posizioni delle definizioni dei simboli */
+  symbolDefs: Map<string, SymbolDefinitionLocation>;
+  /** Mappa delle definizioni condizionali (multiple varianti per simbolo) */
+  symbolConditionalDefs: Map<string, SymbolConditionalDefinition[]>;
+  /** Mappa delle radici di ambiguità: simbolo ambiguo -> simboli da cui dipende */
+  symbolAmbiguityRoots: Map<string, string[]>;
+  /** Mappa di tutte le definizioni #define: nome -> espressione raw */
+  allDefines: Map<string, string>;
+  /** Mappa delle condizioni del preprocessore per ogni define */
+  defineConditions: Map<string, string>;
+  /** Mappa delle macro funzione: nome -> {params, body} */
+  functionDefines: Map<string, FunctionMacroDefinition>;
+  /** Snapshot delle statistiche di stack dell'ultima analisi */
+  lastAnalysisStackUsage: AnalysisStackUsage;
+  /** Ultimo errore di parsing YAML; null se il parsing è riuscito */
+  lastYamlParseError: YamlParseErrorInfo | null;
+};
+
+/**
+ * Crea un'istanza vuota di AnalysisStackUsage con valori di default.
+ * Utilizzato per resettare le statistiche prima di una nuova analisi.
+ * 
+ * @returns Oggetto con statistiche di stack inizializzate a zero
+ */
+export function createDefaultAnalysisStackUsage(): AnalysisStackUsage {
+  return {
+    usedDepth: 0,
+    depthLimit: 0,
+    cycleCount: 0,
+    prunedCount: 0,
+    degraded: false,
+  };
+}
+
+/**
+ * Crea il container di stato in-memory condiviso tra l'analisi e i provider VSCode.
+ * Inizializza tutte le strutture dati necessarie per il funzionamento dell'estensione.
+ * 
+ * @param workspaceRoot - Percorso assoluto alla cartella root del workspace
+ * @param output - Canale di output VSCode per i messaggi di log (wrapped in ColoredOutput)
+ * @returns Stato inizializzato dell'estensione
  */
 export function createCalcDocsState(
   workspaceRoot: string,
-  output: vscode.OutputChannel
+  output: ColoredOutput
 ): CalcDocsState {
   return {
     workspaceRoot,
     output,
+    enabled: true,
     lastYamlPath: "",
     lastYamlRaw: "",
     hasFormulasFile: false,
@@ -47,5 +140,29 @@ export function createCalcDocsState(
     symbolConditionalDefs: new Map<string, SymbolConditionalDefinition[]>(),
     symbolAmbiguityRoots: new Map<string, string[]>(),
     allDefines: new Map<string, string>(),
+    defineConditions: new Map<string, string>(),
+    functionDefines: new Map<string, FunctionMacroDefinition>(),
+    lastAnalysisStackUsage: createDefaultAnalysisStackUsage(),
+    lastYamlParseError: null,
   };
 }
+
+/**
+ * Pulisce tutti i dati computati dell'analisi.
+ * Chiamato quando l'estensione viene disabilitata per fermare i provider dal restituire dati obsoleti.
+ * 
+ * @param state - Stato corrente dell'estensione da pulire
+ */
+export function clearComputedState(state: CalcDocsState): void {
+  state.formulaIndex.clear();
+  state.symbolValues.clear();
+  state.symbolDefs.clear();
+  state.symbolConditionalDefs.clear();
+  state.symbolAmbiguityRoots.clear();
+  state.allDefines.clear();
+  state.defineConditions.clear();
+  state.functionDefines.clear();
+  state.lastAnalysisStackUsage = createDefaultAnalysisStackUsage();
+  state.lastYamlParseError = null;
+}
+

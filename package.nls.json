@@ -1,0 +1,27 @@
+{
+  "extension.description": "Excel inside firmware source code & Formula Evaluator & C/C++ Constant Sync & sanity checker - shows real computed values to catch errors before compiling, plus fast Go to Definition navigation",
+
+  "config.title": "CalcDocs",
+  "config.enabled": "Enable or disable CalcDocs without uninstalling the extension.",
+  "config.scanInterval": "Interval in seconds for periodic scanning (0 = disabled).",
+  "config.ignoredDirs": "Folders to ignore during analysis.",
+  "config.enableCppProviders": "Enable CalcDocs providers for C/C++ as fallback (priority to C/C++ Tools).",
+  "config.resourceStatusMode.always": "Always show runtime status (toggle + CPU/RAM).",
+  "config.resourceStatusMode.aboveCpuThreshold": "Show runtime status only when CPU usage exceeds threshold.",
+  "config.resourceStatusMode": "Controls when to show runtime status in status bar.",
+  "config.resourceCpuThreshold": "CPU threshold (%) used when calcdocs.resourceStatusMode = aboveCpuThreshold.",
+  "config.thousandsSeparator.none": "No thousands separator.",
+  "config.thousandsSeparator.space": "Space (scientific standard)",
+  "config.thousandsSeparator.dot": "Dot operator (⋅, U+22C5)",
+  "config.thousandsSeparator.comma": "Comma (USA, UK)",
+  "config.thousandsSeparator.apostrophe": "Apostrophe (Switzerland)",
+  "config.thousandsSeparator.narrowNoBreakSpace": "Narrow No-Break Space (U+202F)",
+  "config.thousandsSeparator": "Thousands separator for formatted numbers.",
+
+  "command.forceRefresh.title": "CalcDocs: Force Formula Refresh",
+  "command.setScanInterval.title": "CalcDocs: Set Scan Interval",
+  "command.toggleEnabled.title": "CalcDocs: Toggle Enable/Disable",
+  "command.showOutput.title": "CalcDocs: Show Log Output",
+  "command.openTestFolder.title": "CalcDocs: Open Extension Test Folder"
+}
+

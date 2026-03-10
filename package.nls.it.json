@@ -1,0 +1,27 @@
+{
+  "extension.description": "Excel nel codice sorgente del firmware & valutatore formule & sincronizzazione costanti C/C++ & controllo di coerenza - mostra i valori reali calcolati per trovare errori prima della compilazione, più navigazione Vai alla definizione",
+
+  "config.title": "CalcDocs",
+  "config.enabled": "Abilita o disabilita CalcDocs senza disinstallare l'estensione.",
+  "config.scanInterval": "Intervallo in secondi per la scansione periodica (0 = disattivata).",
+  "config.ignoredDirs": "Cartelle da ignorare durante l'analisi.",
+  "config.enableCppProviders": "Abilita provider CalcDocs per C/C++ come fallback (priorità a C/C++ Tools).",
+  "config.resourceStatusMode.always": "Mostra sempre lo stato runtime (toggle + CPU/RAM).",
+  "config.resourceStatusMode.aboveCpuThreshold": "Mostra lo stato runtime solo quando l'uso CPU supera la soglia.",
+  "config.resourceStatusMode": "Controlla quando mostrare lo stato runtime in status bar.",
+  "config.resourceCpuThreshold": "Soglia CPU (%) usata quando calcdocs.resourceStatusMode = aboveCpuThreshold.",
+  "config.thousandsSeparator.none": "Nessun separatore delle migliaia",
+  "config.thousandsSeparator.space": "Spazio (standard scientifico)",
+  "config.thousandsSeparator.dot": "Punto alto (⋅, U+22C5)",
+  "config.thousandsSeparator.comma": "Virgola (USA, UK)",
+  "config.thousandsSeparator.apostrophe": "Apostrofo (Svizzera)",
+  "config.thousandsSeparator.narrowNoBreakSpace": "Narrow No-Break Space (U+202F)",
+  "config.thousandsSeparator": "Separatore delle migliaia per i numeri formattati.",
+
+  "command.forceRefresh.title": "CalcDocs: Forza aggiornamento formule",
+  "command.setScanInterval.title": "CalcDocs: Imposta intervallo scansione",
+  "command.toggleEnabled.title": "CalcDocs: Toggle abilitazione",
+  "command.showOutput.title": "CalcDocs: Mostra output",
+  "command.openTestFolder.title": "CalcDocs: Apri cartella di test dell'estensione"
+}
+

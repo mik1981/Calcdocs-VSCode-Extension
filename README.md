@@ -1,5 +1,11 @@
 # 🧮 CalcDocs - Formula Evaluator & C/C++ Constant Sync + Computed-Value Preview
 
+[![CI](https://badgen.net/vs-marketplace/v/convergo-dev.calcdocs-vscode-extension)](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+
+This extension is designed to enhance your embedded C/C++ workflow.  
+For the best experience, we recommend installing the Microsoft C/C++ extension (ms-vscode.cpptools) to benefit from IntelliSense, code navigation and advanced language tooling.  
+When combined with CMake Tools and Cortex‑Debug, this extension becomes a powerful part of a complete embedded toolchain inside VS Code.
+
 **See the real values your compiler produces. Catch errors before they hit your firmware. Navigate formulas instantly.**
 
 **CalcDocs is your real‑time engineering sanity checker.**  
@@ -40,41 +46,56 @@ CalcDocs solves all of this by showing you **what the compiler would really comp
 - **Mismatch detection**  
   Warns you when YAML values and computed C/C++ constants diverge beyond a threshold. 
 
+- **Conditional #define support**  
+  Full preprocessor condition tracking (`#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`) with multiple definition handling and ambiguity detection.
+
+- **Function-like macro evaluation**  
+  Hover over macro calls to see computed results with proper parameter expansion.
+
+- **Stack safety monitoring**  
+  Circular dependency detection and depth limit protection with degraded mode indicators.
+
 - **Automatic YAML write‑back**  
   When formulas are refreshed, YAML `dati` and `value` fields are updated automatically.
 
 ---
 
-![CalcDocs Demo](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Refresh.gif)
-![CalcDocs Screenshot](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Definition.jpg)
+![CalcDocs CodeLens Demo](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Refresh.gif)  
+![CalcDocs Screenshot](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Definition.jpg)  
+![CalcDocs Formula Refresh Demo](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Formulas.gif)  
 
 CalcDocs helps firmware, embedded, and software teams keep formulas, documentation, and source constants aligned.
 
 - GitHub project: [Calcdocs-VSCode-Extension](https://github.com/mik1981/Calcdocs-VSCode-Extension/)
+- MarketPlace VSCode project: [Calcdocs-VSCode-Extension](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
 - Issues: [Open an issue](https://github.com/mik1981/Calcdocs-VSCode-Extension/issues)
 
 ---
 
 ## 📑 Index
 
-- [Install from `.vsix` File (Quick Guide)](#install-from-vsix-file-quick-guide)
-- [Features](#features)
-- [Commands](#commands)
-- [Configuration](#configuration)
-- [File Scanning Rules](#file-scanning-rules)
-- [CSV Table Lookup](#csv-table-lookup)
-- [Complex Formulas and Constants](#complex-formulas-and-constants)
-- [Quick Example](#quick-example)
-- [Contributing](#contributing)
-- [Sponsor](#sponsor)
-- [Roadmap](#roadmap)
-- [License](#license)
+- [🧮 CalcDocs - Formula Evaluator \& C/C++ Constant Sync + Computed-Value Preview](#-calcdocs---formula-evaluator--cc-constant-sync--computed-value-preview)
+  - [🔥 Why CalcDocs?](#-why-calcdocs)
+  - [⭐ Key Features (the real value)](#-key-features-the-real-value)
+  - [📑 Index](#-index)
+  - [📦 Install from `.vsix` File (Quick Guide)](#-install-from-vsix-file-quick-guide)
+  - [🚀 Features](#-features)
+  - [⌨️ Commands](#️-commands)
+  - [⚙️ Configuration](#️-configuration)
+  - [🔍 File Scanning Rules](#-file-scanning-rules)
+  - [📊 CSV Table Lookup](#-csv-table-lookup)
+  - [🧠 Complex Formulas and Constants](#-complex-formulas-and-constants)
+  - [🧪 Quick Example](#-quick-example)
+  - [⭐ Recommended Extensions](#-recommended-extensions)
+  - [🤝 Contributing](#-contributing)
+  - [❤️ Sponsor](#️-sponsor)
+  - [📄 License](#-license)
 
 ---
 
 ## 📦 Install from `.vsix` File (Quick Guide)
 
-If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.5.vsix` to install it without going through the Marketplace.
+If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.6.vsix` to install it without going through the Marketplace.
 
 **Graphical method (recommended):**
 
@@ -88,14 +109,77 @@ If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.5.vsix
 **Terminal method (optional):**
 
 ```bash
-code --install-extension calcdocs-vscode-extension-0.1.5.vsix
+code --install-extension calcdocs-vscode-extension-0.1.6.vsix
 ```
 
 **Verify the installation:**
 
 1. Open the Command Palette (`Ctrl+Shift+P`).
-2. Search for `CalcDocs: Forza aggiornamento formule`.
+2. Search for `CalcDocs: Force Formula Refresh`.
 3. If the command is visible, the extension has been installed correctly.
+
+**Project structure:**
+
+```
+calcdocs-vscode-extension/
+│
+├── src/                          # Extension source code (TypeScript)
+│   ├── extension.ts               # Main entry point, activation/deactivation
+│   │
+│   ├── commands/                  # VS Code commands implementation
+│   │   └── commands.ts            # Command handlers (forceRefresh, toggleEnabled, etc.)
+│   │
+│   ├── core/                      # Core business logic
+│   │   ├── analysis.ts            # Main analysis orchestration, workspace scanning, YAML write-back
+│   │   ├── config.ts              # Configuration management
+│   │   ├── cppParser.ts           # C/C++ #define and const parsing
+│   │   ├── csvTables.ts           # CSV table loading and lookup functions
+│   │   ├── expression.ts          # Expression evaluation, token replacement, symbol resolution
+│   │   ├── files.ts               # File system operations, recursive listing
+│   │   ├── state.ts               # Application state management
+│   │   └── yamlParser.ts          # YAML parsing and formula entry building
+│   │
+│   ├── infra/                     # Infrastructure utilities
+│   │   ├── resourceMonitor.ts     # CPU/RAM monitoring for runtime status
+│   │   └── watchers.ts            # File watchers and analysis scheduling
+│   │
+│   ├── providers/                 # VS Code language providers
+│   │   ├── codeLensProvider.ts    # CodeLens for displaying C/C++ computed values
+│   │   ├── definitionProvider.ts # Go to Definition for symbols (YAML ↔ C/C++)
+│   │   └── hoverProvider.ts       # Hover previews with expanded formulas and values
+│   │
+│   ├── types/                     # TypeScript type definitions
+│   │   └── FormulaEntry.ts        # Type definitions for formula entries
+│   │
+│   ├── ui/                        # User interface components
+│   │   └── statusBar.ts           # Status bar management (formula count, runtime status)
+│   │
+│   └── utils/                     # Utility functions
+│       ├── braceDepth.ts          # Brace depth calculation for macro parsing
+│       ├── editor.ts              # Editor utilities (word picking, cursor position)
+│       ├── localize.ts            # Localization/internationalization support
+│       ├── nformat.ts             # Number formatting utilities
+│       ├── output.ts              # Output channel with colored logging
+│       ├── regex.ts               # Regex utilities
+│       └── text.ts                # Text manipulation utilities
+│
+├── resources/                     # Static resources and assets
+├── l10n/                          # Localization files
+├── test/                          # Test files and fixtures
+│   ├── test.c                     # Sample C/C++ file with defines and consts
+│   ├── formulas.yaml              # Sample YAML formulas file
+│   └── ntc_10k_table.csv          # Sample CSV table for NTC thermistor lookup
+│
+├── package.json                   # Extension manifest and npm dependencies
+├── tsconfig.json                  # TypeScript configuration
+├── esbuild.js                     # Build script (esbuild bundler)
+├── README.md                      # Project documentation
+├── CHANGELOG.md                   # Version history
+└── LICENSE.md                     # MIT license
+```
+
+Note:
+The node_modules directory contains all `npm` dependencies required to build and run the extension and is automatically generated by `npm install`.
 
 ---
 
@@ -107,14 +191,22 @@ code --install-extension calcdocs-vscode-extension-0.1.5.vsix
 - Go to definition for:
   - keys defined in `formula*.yaml` / `formulas*.yml`
   - `#define` and `const` symbols found in C/C++ files
+  - Multiple locations shown when symbols have conditional definitions
 - Formula expansion with known symbol values.
 - Numeric evaluation when expressions can be fully resolved.
 - Recursive resolution of complex C/C++ definitions (`#define` and `const` with dependencies).
 - C/C++ CodeLens for composite definitions with computed numeric values.
+- Ambiguity warnings in CodeLens when definitions depend on preprocessor conditions.
 - Mismatch detection between C/C++ constants and YAML computed values (warning lens when difference is significant).
 - YAML write-back of `dati` and `value` fields on refresh.
 - CSV/table lookups in formulas with named columns and optional interpolation.
 - Status bar quick refresh and periodic background analysis.
+- Runtime CPU/RAM monitor with a quick ON/OFF toggle from status bar.
+- C/C++ function-like macro support with parameter expansion (e.g., `#define MY_MACRO(x) ((x) * 2)`).
+- Configurable thousands separator for formatted numbers.
+- Preprocessor conditional tracking (`#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`).
+- Ambiguity detection for symbols with multiple conditional definitions.
+- Stack safety with circular dependency detection and depth limit protection.
 
 ---
 
@@ -122,9 +214,11 @@ code --install-extension calcdocs-vscode-extension-0.1.5.vsix
 
 | Command | What it does |
 | --- | --- |
-| `CalcDocs: Forza aggiornamento formule` | Rebuilds index, recalculates formulas, and writes back YAML (`dati`, `value`) |
-| `CalcDocs: Imposta intervallo scansione` | Sets periodic scan interval in seconds (`0` disables periodic scan/watchers) |
-| Status bar button `CalcDocs` | Manual quick refresh |
+| `CalcDocs: Force Formula Refresh` | Rebuilds index, recalculates formulas, and writes back YAML (`dati`, `value`) |
+| `CalcDocs: Set Scan Interval` | Sets periodic scan interval in seconds (`0` disables periodic scan/watchers) |
+| `CalcDocs: Show Log Output` | Show console CalcDocs output |
+| `CalcDocs: Toggle Enable/Disable extension` | Enables/disables CalcDocs at runtime without uninstalling it |
+| Status bar button `CalcDocs` | Manual formula refresh |
 
 ---
 
@@ -135,6 +229,10 @@ Available workspace settings:
 - `calcdocs.scanInterval` (number, default `0`)
 - `calcdocs.ignoredDirs` (string array, folders excluded from analysis)
 - `calcdocs.enableCppProviders` (boolean, default `true`, keeps C/C++ tools as primary)
+- `calcdocs.enabled` (boolean, default `true`, global ON/OFF switch for CalcDocs)
+- `calcdocs.resourceStatusMode` (`always` or `aboveCpuThreshold`, controls runtime status bar visibility)
+- `calcdocs.resourceCpuThreshold` (number 0-100, default `70`, used when mode is `aboveCpuThreshold`)
+- `calcdocs.thousandsSeparator` (`none`, `space`, `dot`, `comma`, `apostrophe`, `narrowNoBreakSpace`, default `space`)
 
 ---
 
@@ -158,7 +256,7 @@ Activation events:
 
 ---
 
-## CSV Table Lookup
+## 📊 CSV Table Lookup
 
 Use this in YAML formulas to read values from adjacent CSV files.
 
@@ -198,7 +296,7 @@ Note: `csv`, `table`, and `lookup` remain aliases of the same function.
 
 ---
 
-## Complex Formulas and Constants
+## 🧠 Complex Formulas and Constants
 
 This section describes what is currently supported by the evaluator and parser.
 
@@ -218,6 +316,9 @@ C/C++ constants currently extracted:
 
 - Object-like `#define` with one-line expression:
   - `#define NAME EXPR`
+- Function-like `#define` with one-line expression:
+  - `#define NAME(P1, P2, ...) EXPR`
+  - calls like `NAME(123, A+1)` are expanded when arguments are resolvable
 - `const`/`static const` scalar declarations with these types:
   - `long`, `int`, `short`, `char`, `float`, `double`
   - `int*_t`, `uint*_t` forms (e.g. `int32_t`, `uint16_t`)
@@ -225,7 +326,6 @@ C/C++ constants currently extracted:
 
 Current limits:
 
-- Function-like macros are ignored (for example `#define F(x) ...`).
 - Multi-line macros are not parsed as a single expression.
 - `const` declarations with unsupported types (for example pointers, structs, custom typedefs not matching supported patterns) are ignored for numeric extraction.
 - Expressions that do not reduce to a finite numeric value are left unresolved.
@@ -252,7 +352,25 @@ WHEEL_RADIUS:
 const int MAX_SPEED = SPEED_LIMIT_FACTOR * 2;
 ```
 
-CalcDocs can expand and resolve these symbols, show computed values in hover/CodeLens, and navigate to their definitions.
+---
+
+## ⭐ Recommended Extensions
+
+For the best experience when working with embedded C and C++, we recommend installing the following extensions:
+- **C/C++ (Microsoft)** – *ms-vscode.cpptools*  
+  Provides IntelliSense, code navigation, diagnostics, and high‑quality C/C++ editing support.
+  Works perfectly alongside this extension for embedded workflows.
+
+- **CMake Tools** – *ms-vscode.cmake-tools*  
+  If your firmware or embedded project uses CMake, this extension offers automatic configuration, build presets, debugging integration, and seamless toolchain detection.
+
+- **Cortex‑Debug** – *marus25.cortex-debug*  
+  Recommended if you work with ARM MCUs.
+  Supports SWD/JTAG debugging, RTT, semihosting, and GDB server integrations (OpenOCD, PyOCD, ST‑Link, J‑Link).
+
+- **C/C++ DevTools** – *ms-vscode.cpp-devtools*  
+  Brings additional capabilities built on top of the C/C++ extension, improving configuration, diagnostics and developer workflows for C/C++ projects.
+  These extensions integrate naturally with this extension and are often used together in professional embedded environments.
 
 ---
 
@@ -272,17 +390,6 @@ Contributions are welcome, especially for:
 If you find this extension useful, consider sponsoring the project.
 
 [![PayPal](./resources/paypal.png)](https://www.paypal.me/gianmichelepasinelli)
-
----
-
-## 🗺️ Roadmap
-
-Planned improvements:
-
-- YAML schema validation
-- stronger expression parsing
-- more automated tests for YAML write-back
-- configurable include/exclude paths
 
 ---
 

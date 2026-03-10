@@ -1,4 +1,4 @@
-﻿import * as vscode from "vscode";
+import * as vscode from "vscode";
 
 import { CalcDocsConfig, isIgnoredUri } from "../core/config";
 import { CalcDocsState } from "../core/state";
@@ -25,6 +25,10 @@ export class AnalysisScheduler implements vscode.Disposable {
     }
 
     this.debounceTimer = setTimeout(() => {
+      if (!this.state.enabled) {
+        return;
+      }
+
       void this.runAnalysis();
     }, delayMs);
   }
@@ -36,8 +40,13 @@ export class AnalysisScheduler implements vscode.Disposable {
     context: vscode.ExtensionContext,
     config: CalcDocsConfig
   ): void {
-    this.registerWatchers(context, config.enableCppProviders, config.scanInterval);
-    this.setupPeriodicScan(config.scanInterval);
+    this.registerWatchers(
+      context,
+      config.enableCppProviders,
+      config.scanInterval,
+      config.enabled
+    );
+    this.setupPeriodicScan(config.scanInterval, config.enabled);
   }
 
   /**
@@ -63,11 +72,12 @@ export class AnalysisScheduler implements vscode.Disposable {
   private registerWatchers(
     context: vscode.ExtensionContext,
     enableCppProviders: boolean,
-    scanInterval: number
+    scanInterval: number,
+    enabled: boolean
   ): void {
     this.disposeWatchers();
 
-    if (scanInterval === 0) {
+    if (!enabled || scanInterval === 0) {
       return;
     }
 
@@ -104,13 +114,13 @@ export class AnalysisScheduler implements vscode.Disposable {
   /**
    * Configures periodic analysis loop (seconds -> ms).
    */
-  private setupPeriodicScan(scanInterval: number): void {
+  private setupPeriodicScan(scanInterval: number, enabled: boolean): void {
     if (this.periodicTimer) {
       clearInterval(this.periodicTimer);
       this.periodicTimer = null;
     }
 
-    if (scanInterval === 0) {
+    if (!enabled || scanInterval === 0) {
       this.disposeWatchers();
       return;
     }

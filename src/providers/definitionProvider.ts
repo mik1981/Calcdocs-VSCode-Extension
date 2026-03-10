@@ -1,4 +1,4 @@
-﻿import * as path from "path";
+import * as path from "path";
 import * as vscode from "vscode";
 
 import { CalcDocsState } from "../core/state";
@@ -59,6 +59,10 @@ export function registerDefinitionProviders(
       ],
       {
         provideDefinition(document, position) {
+          if (!state.enabled) {
+            return undefined;
+          }
+
           const word = pickWord(document, position);
           if (!word) {
             return undefined;
@@ -96,6 +100,10 @@ export function registerDefinitionProviders(
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(cppSelectors, {
       provideDefinition(document, position) {
+        if (!state.enabled) {
+          return undefined;
+        }
+
         const word = pickWord(document, position);
         if (!word) {
           return undefined;

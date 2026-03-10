@@ -1,9 +1,10 @@
 ﻿import * as fsp from "fs/promises";
 import * as path from "path";
 
-import { DEFINE_RX, CONST_RX, SRC_EXTS } from "../utils/regex";
+import { updateBraceDepth } from "../utils/braceDepth";
+import { DEFINE_RX, SRC_EXTS } from "../utils/regex";
 import { stripComments } from "../utils/text";
-import { safeEval } from "./expression";
+import { type FunctionMacroDefinition, safeEval } from "./expression";
 import {
   SymbolConditionalDefinition,
   SymbolDefinitionLocation,
@@ -12,13 +13,27 @@ import {
 export type CppSymbolDefinition = {
   name: string;
   expr: string;
+  macroParams?: string[];
 };
 
 export type CollectedCppSymbols = {
   defines: Map<string, string>;
+  defineConditions: Map<string, string>;
+  functionDefines: Map<string, FunctionMacroDefinition>;
   defineVariants: Map<string, SymbolConditionalDefinition[]>;
   consts: Map<string, number>;
   locations: Map<string, SymbolDefinitionLocation>;
+};
+
+type ParsedDefineDirective = {
+  name: string;
+  expr: string;
+  params?: string[];
+};
+
+type ParsedValueDeclaration = {
+  name: string;
+  expr: string;
 };
 
 type ConditionalFrame = {
@@ -33,6 +48,46 @@ const IF_RX = /^\s*#\s*if\b(.+)$/;
 const ELIF_RX = /^\s*#\s*elif\b(.+)$/;
 const ELSE_RX = /^\s*#\s*else\b/;
 const ENDIF_RX = /^\s*#\s*endif\b/;
+const CONTROL_FLOW_KEYWORD_RX =
+  /^(?:if|else|for|while|switch|case|return|goto|do)\b/;
+
+function findNextMeaningfulLine(
+  lines: string[],
+  startIndex: number
+): string | null {
+  for (let i = startIndex + 1; i < lines.length; i += 1) {
+    const candidate = stripComments(lines[i]).trim();
+    if (!candidate) {
+      continue;
+    }
+
+    return candidate;
+  }
+
+  return null;
+}
+
+function isTopLevelIncludeGuard(
+  lines: string[],
+  lineIndex: number,
+  guardSymbol: string,
+  conditionalStackDepth: number
+): boolean {
+  if (conditionalStackDepth !== 0) {
+    return false;
+  }
+
+  const nextMeaningfulLine = findNextMeaningfulLine(lines, lineIndex);
+  if (!nextMeaningfulLine) {
+    return false;
+  }
+
+  const defineMatch = nextMeaningfulLine.match(
+    /^\s*#\s*define\s+([A-Za-z_]\w*)\b/
+  );
+
+  return Boolean(defineMatch && defineMatch[1] === guardSymbol);
+}
 
 function normalizeDirectiveCondition(raw: string): string {
   const cleaned = stripComments(raw).trim();
@@ -91,31 +146,195 @@ function buildElseCondition(branchConditions: string[]): string {
   return branchConditions.map((condition) => negateCondition(condition)).join(" && ");
 }
 
+function parseDefineDirective(line: string): ParsedDefineDirective | undefined {
+  const directiveMatch = line.match(DEFINE_RX);
+  if (!directiveMatch) {
+    return undefined;
+  }
+
+  const name = directiveMatch[1];
+  const rawTail = directiveMatch[2] ?? "";
+
+  // Function-like macros are recognized only when '(' immediately follows the name.
+  if (rawTail.startsWith("(")) {
+    let depth = 0;
+    let closeIndex = -1;
+
+    for (let i = 0; i < rawTail.length; i += 1) {
+      const char = rawTail[i];
+      if (char === "(") {
+        depth += 1;
+        continue;
+      }
+
+      if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          closeIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (closeIndex < 0) {
+      return undefined;
+    }
+
+    const rawParams = rawTail.slice(1, closeIndex).trim();
+    const params =
+      rawParams.length === 0
+        ? []
+        : rawParams
+            .split(",")
+            .map((param) => param.trim())
+            .filter((param) => param.length > 0);
+
+    const expr = stripComments(rawTail.slice(closeIndex + 1));
+    if (!expr) {
+      return undefined;
+    }
+
+    return {
+      name,
+      expr,
+      params,
+    };
+  }
+
+  const expr = stripComments(rawTail);
+  if (!expr) {
+    return undefined;
+  }
+
+  return {
+    name,
+    expr,
+  };
+}
+
+function findAssignmentOperatorIndex(line: string): number {
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char !== "=") {
+      continue;
+    }
+
+    const prev = i > 0 ? line[i - 1] : "";
+    const next = i + 1 < line.length ? line[i + 1] : "";
+
+    if (
+      prev === "=" ||
+      prev === "!" ||
+      prev === "<" ||
+      prev === ">" ||
+      prev === "+" ||
+      prev === "-" ||
+      prev === "*" ||
+      prev === "/" ||
+      prev === "%" ||
+      prev === "&" ||
+      prev === "|" ||
+      prev === "^" ||
+      next === "="
+    ) {
+      continue;
+    }
+
+    return i;
+  }
+
+  return -1;
+}
+
+function parseValueDeclaration(line: string): ParsedValueDeclaration | undefined {
+  const cleaned = stripComments(line).trim();
+  if (!cleaned || cleaned.startsWith("#")) {
+    return undefined;
+  }
+
+  const semicolonIndex = cleaned.lastIndexOf(";");
+  if (semicolonIndex < 0) {
+    return undefined;
+  }
+
+  const declaration = cleaned.slice(0, semicolonIndex).trim();
+  if (!declaration) {
+    return undefined;
+  }
+
+  const assignmentIndex = findAssignmentOperatorIndex(declaration);
+  if (assignmentIndex <= 0) {
+    return undefined;
+  }
+
+  const leftSide = declaration.slice(0, assignmentIndex).trim();
+  const expr = declaration.slice(assignmentIndex + 1).trim();
+
+  if (!leftSide || !expr || expr.startsWith("{")) {
+    return undefined;
+  }
+
+  if (
+    leftSide.includes("(") ||
+    leftSide.includes(")") ||
+    leftSide.includes("[") ||
+    leftSide.includes("]") ||
+    leftSide.includes("{") ||
+    leftSide.includes("}") ||
+    leftSide.includes("*") ||
+    leftSide.includes("&")
+  ) {
+    return undefined;
+  }
+
+  const leftTokens = leftSide.split(/\s+/).filter((token) => token.length > 0);
+  if (leftTokens.length < 2) {
+    return undefined;
+  }
+
+  if (CONTROL_FLOW_KEYWORD_RX.test(leftTokens[0])) {
+    return undefined;
+  }
+
+  const name = leftTokens[leftTokens.length - 1];
+  if (!/^[A-Za-z_]\w*$/.test(name)) {
+    return undefined;
+  }
+
+  if (/,\s*[A-Za-z_]\w*\s*=/.test(expr)) {
+    return undefined;
+  }
+
+  return {
+    name,
+    expr,
+  };
+}
+
 /**
  * Parses one C/C++ line and extracts either:
  * - "#define NAME EXPR"
- * - "const TYPE NAME = EXPR;"
+ * - "#define NAME(P1,...) EXPR"
+ * - scalar declaration with assignment ("TYPE NAME = EXPR;")
  * Returns undefined for non-matching lines.
  */
 export function parseCppSymbolDefinition(
   line: string
 ): CppSymbolDefinition | undefined {
-  const defineMatch = line.match(/^\s*#define\s+([A-Za-z_]\w*)\s+(.+)$/);
-  if (defineMatch) {
+  const parsedDefine = parseDefineDirective(line);
+  if (parsedDefine) {
     return {
-      name: defineMatch[1],
-      expr: defineMatch[2],
+      name: parsedDefine.name,
+      expr: parsedDefine.expr,
+      macroParams: parsedDefine.params,
     };
   }
 
-  const constMatch = line.match(
-    /^\s*(?:static\s+)?const\s+[A-Za-z0-9_]+\s+([A-Za-z_]\w*)\s*=\s*(.+);/
-  );
-
-  if (constMatch) {
+  const parsedValueDeclaration = parseValueDeclaration(line);
+  if (parsedValueDeclaration) {
     return {
-      name: constMatch[1],
-      expr: constMatch[2],
+      name: parsedValueDeclaration.name,
+      expr: parsedValueDeclaration.expr,
     };
   }
 
@@ -124,19 +343,19 @@ export function parseCppSymbolDefinition(
 
 /**
  * Scans source files and collects:
- * - raw #define expressions
- * - numeric const values
+ * - raw object-like #define expressions
+ * - function-like #define macros
+ * - scalar declaration expressions (const/variables with one-line assignment)
+ * - direct numeric values for declarations that can be evaluated immediately
  * - source locations for navigation
- *
- * Example:
- * "#define K 3" -> defines["K"]="3"
- * "const int V = 10;" -> consts["V"]=10
  */
 export async function collectDefinesAndConsts(
   files: string[],
   workspaceRoot: string
 ): Promise<CollectedCppSymbols> {
   const defines = new Map<string, string>();
+  const defineConditions = new Map<string, string>();
+  const functionDefines = new Map<string, FunctionMacroDefinition>();
   const defineVariants = new Map<string, SymbolConditionalDefinition[]>();
   const consts = new Map<string, number>();
   const locations = new Map<string, SymbolDefinitionLocation>();
@@ -156,10 +375,13 @@ export async function collectDefinesAndConsts(
     const lines = text.split(/\r?\n/);
     const conditionalStack: ConditionalFrame[] = [];
     let currentCondition: string | null = null;
+    let braceDepth = 0;
 
     for (let i = 0; i < lines.length; i += 1) {
       const line = lines[i];
-      const directiveLine = stripComments(line).trim();
+      const lineWithoutComments = stripComments(line);
+      const directiveLine = lineWithoutComments.trim();
+      let isDirectiveLine = false;
 
       const ifdefMatch = directiveLine.match(IFDEF_RX);
       if (ifdefMatch) {
@@ -173,133 +395,159 @@ export async function collectDefinesAndConsts(
         });
 
         currentCondition = activeCondition;
-        continue;
-      }
+        isDirectiveLine = true;
+      } else {
+        const ifndefMatch = directiveLine.match(IFNDEF_RX);
+        if (ifndefMatch) {
+          const branchCondition = isTopLevelIncludeGuard(
+            lines,
+            i,
+            ifndefMatch[1],
+            conditionalStack.length
+          )
+            ? "1"
+            : `!defined(${ifndefMatch[1]})`;
+          const activeCondition = combineConditions(currentCondition, branchCondition);
 
-      const ifndefMatch = directiveLine.match(IFNDEF_RX);
-      if (ifndefMatch) {
-        const branchCondition = `!defined(${ifndefMatch[1]})`;
-        const activeCondition = combineConditions(currentCondition, branchCondition);
-
-        conditionalStack.push({
-          parentCondition: currentCondition,
-          branchConditions: [branchCondition],
-          activeCondition,
-        });
-
-        currentCondition = activeCondition;
-        continue;
-      }
-
-      const ifMatch = directiveLine.match(IF_RX);
-      if (ifMatch) {
-        const branchCondition = normalizeDirectiveCondition(ifMatch[1]);
-        const activeCondition = combineConditions(currentCondition, branchCondition);
-
-        conditionalStack.push({
-          parentCondition: currentCondition,
-          branchConditions: [branchCondition],
-          activeCondition,
-        });
-
-        currentCondition = activeCondition;
-        continue;
-      }
-
-      const elifMatch = directiveLine.match(ELIF_RX);
-      if (elifMatch && conditionalStack.length > 0) {
-        const frame = conditionalStack[conditionalStack.length - 1];
-        const branchCondition = normalizeDirectiveCondition(elifMatch[1]);
-        const previousBranchExclusion = buildElseCondition(frame.branchConditions);
-        const localCondition =
-          previousBranchExclusion === "1"
-            ? branchCondition
-            : `(${previousBranchExclusion}) && (${branchCondition})`;
-
-        frame.branchConditions.push(branchCondition);
-        frame.activeCondition = combineConditions(frame.parentCondition, localCondition);
-        currentCondition = frame.activeCondition;
-        continue;
-      }
-
-      if (ELSE_RX.test(directiveLine) && conditionalStack.length > 0) {
-        const frame = conditionalStack[conditionalStack.length - 1];
-        const elseCondition = buildElseCondition(frame.branchConditions);
-
-        frame.activeCondition = combineConditions(frame.parentCondition, elseCondition);
-        currentCondition = frame.activeCondition;
-        continue;
-      }
-
-      if (ENDIF_RX.test(directiveLine) && conditionalStack.length > 0) {
-        const frame = conditionalStack.pop();
-        currentCondition = frame?.parentCondition ?? null;
-        continue;
-      }
-
-      const defineMatch = line.match(DEFINE_RX);
-      if (!defineMatch) {
-        continue;
-      }
-
-      const name = defineMatch[1];
-      const expr = stripComments(defineMatch[2]);
-
-      if (name.includes("(")) {
-        continue;
-      }
-
-      if (!defines.has(name)) {
-        defines.set(name, expr);
-      }
-
-      const location: SymbolDefinitionLocation = {
-        file: path.relative(workspaceRoot, file),
-        line: i,
-      };
-
-      if (!locations.has(name)) {
-        locations.set(name, location);
-      }
-
-      const variants = defineVariants.get(name) ?? [];
-      variants.push({
-        ...location,
-        expr,
-        condition:
-          currentCondition && currentCondition !== "1" ? currentCondition : "always",
-      });
-      defineVariants.set(name, variants);
-    }
-
-    for (const match of text.matchAll(CONST_RX)) {
-      const name = match[1];
-      const expr = stripComments(match[2]);
-
-      try {
-        const value = safeEval(expr);
-
-        if (consts.has(name)) {
-          continue;
-        }
-
-        consts.set(name, value);
-
-        const line = lines.findIndex((candidate) => candidate.includes(name));
-        if (!locations.has(name)) {
-          locations.set(name, {
-            file: path.relative(workspaceRoot, file),
-            line: Math.max(0, line),
+          conditionalStack.push({
+            parentCondition: currentCondition,
+            branchConditions: [branchCondition],
+            activeCondition,
           });
+
+          currentCondition = activeCondition;
+          isDirectiveLine = true;
+        } else {
+          const ifMatch = directiveLine.match(IF_RX);
+          if (ifMatch) {
+            const branchCondition = normalizeDirectiveCondition(ifMatch[1]);
+            const activeCondition = combineConditions(currentCondition, branchCondition);
+
+            conditionalStack.push({
+              parentCondition: currentCondition,
+              branchConditions: [branchCondition],
+              activeCondition,
+            });
+
+            currentCondition = activeCondition;
+            isDirectiveLine = true;
+          } else {
+            const elifMatch = directiveLine.match(ELIF_RX);
+            if (elifMatch && conditionalStack.length > 0) {
+              const frame = conditionalStack[conditionalStack.length - 1];
+              const branchCondition = normalizeDirectiveCondition(elifMatch[1]);
+              const previousBranchExclusion = buildElseCondition(frame.branchConditions);
+              const localCondition =
+                previousBranchExclusion === "1"
+                  ? branchCondition
+                  : `(${previousBranchExclusion}) && (${branchCondition})`;
+
+              frame.branchConditions.push(branchCondition);
+              frame.activeCondition = combineConditions(
+                frame.parentCondition,
+                localCondition
+              );
+              currentCondition = frame.activeCondition;
+              isDirectiveLine = true;
+            } else if (ELSE_RX.test(directiveLine) && conditionalStack.length > 0) {
+              const frame = conditionalStack[conditionalStack.length - 1];
+              const elseCondition = buildElseCondition(frame.branchConditions);
+
+              frame.activeCondition = combineConditions(
+                frame.parentCondition,
+                elseCondition
+              );
+              currentCondition = frame.activeCondition;
+              isDirectiveLine = true;
+            } else if (ENDIF_RX.test(directiveLine) && conditionalStack.length > 0) {
+              const frame = conditionalStack.pop();
+              currentCondition = frame?.parentCondition ?? null;
+              isDirectiveLine = true;
+            }
+          }
         }
-      } catch {
-        // Ignore const declarations that are not fully numeric.
       }
+
+      if (!isDirectiveLine) {
+        const definitionCondition =
+          currentCondition && currentCondition !== "1" ? currentCondition : "always";
+
+        const parsedDefine = parseDefineDirective(line);
+        if (parsedDefine) {
+          const { name, expr, params } = parsedDefine;
+
+          if (params) {
+            if (!functionDefines.has(name)) {
+              functionDefines.set(name, {
+                params,
+                body: expr,
+              });
+            }
+          } else if (!defines.has(name)) {
+            defines.set(name, expr);
+            defineConditions.set(name, definitionCondition);
+          }
+
+          const location: SymbolDefinitionLocation = {
+            file: path.relative(workspaceRoot, file),
+            line: i,
+          };
+
+          if (!locations.has(name)) {
+            locations.set(name, location);
+          }
+
+          const variants = defineVariants.get(name) ?? [];
+          variants.push({
+            ...location,
+            expr,
+            condition: definitionCondition,
+          });
+          defineVariants.set(name, variants);
+        } else if (braceDepth === 0) {
+          const parsedValueDeclaration = parseValueDeclaration(line);
+          if (parsedValueDeclaration) {
+            const { name, expr } = parsedValueDeclaration;
+
+            if (!defines.has(name)) {
+              defines.set(name, expr);
+              defineConditions.set(name, definitionCondition);
+
+              try {
+                consts.set(name, safeEval(expr));
+              } catch {
+                // Keep unresolved declaration expressions for recursive expansion.
+              }
+            }
+
+            const location: SymbolDefinitionLocation = {
+              file: path.relative(workspaceRoot, file),
+              line: i,
+            };
+
+            if (!locations.has(name)) {
+              locations.set(name, location);
+            }
+
+            const variants = defineVariants.get(name) ?? [];
+            variants.push({
+              ...location,
+              expr,
+              condition: definitionCondition,
+            });
+            defineVariants.set(name, variants);
+          }
+        }
+      }
+
+      braceDepth = updateBraceDepth(braceDepth, lineWithoutComments);
     }
   }
 
   return {
     defines,
+    defineConditions,
+    functionDefines,
     defineVariants,
     consts,
     locations,

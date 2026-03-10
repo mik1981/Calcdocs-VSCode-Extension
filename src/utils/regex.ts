@@ -6,8 +6,8 @@ export const TOKEN_RX = /[A-Za-z_][A-Za-z0-9_]*/g;
 /**
  * #define NAME EXPR matcher (single-line expression).
  */
-export const DEFINE_RX =
-  /^\s*#define\s+([A-Za-z_]\w*)\s+([^\r\n]+?)\s*$/;
+export const DEFINE_RX = /^\s*#define\s+([A-Za-z_]\w*)(.*)$/;
+  // /^\s*#define\s+([A-Za-z_]\w*)\s+([^\r\n]+?)\s*$/;
 
 /**
  * const TYPE NAME = EXPR matcher used for numeric extraction.

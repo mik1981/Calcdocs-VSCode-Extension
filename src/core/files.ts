@@ -1,6 +1,7 @@
 ﻿import * as fsp from "fs/promises";
 import * as path from "path";
 import { Dirent } from "fs";
+import { CalcDocsState } from "./state";
 
 /**
  * Recursively lists files under root, skipping directories matched by callback.
@@ -8,7 +9,8 @@ import { Dirent } from "fs";
  */
 export async function listFilesRecursive(
   root: string,
-  isIgnoredDir: (dirName: string) => boolean
+  isIgnoredDir: (absoluteDirPath: string, dirName: string) => boolean,
+  state: CalcDocsState
 ): Promise<string[]> {
   const collectedFiles: string[] = [];
 
@@ -28,8 +30,11 @@ export async function listFilesRecursive(
       const absolutePath = path.join(currentDir, entryName);
 
       if (entry.isDirectory()) {
-        if (!isIgnoredDir(entryName)) {
+        if (!isIgnoredDir(absolutePath, entryName)) {
+          // state.output.appendLine(`************** ${entryName} -- ${absolutePath}`);
           await walk(absolutePath);
+        // } else {
+        //   state.output.appendLine(`Ignorata ${entryName} -- ${absolutePath}`);
         }
         continue;
       }
