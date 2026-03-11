@@ -3,7 +3,7 @@ import * as path from "path";
 
 import { updateBraceDepth } from "../utils/braceDepth";
 import { DEFINE_RX, SRC_EXTS } from "../utils/regex";
-import { stripComments } from "../utils/text";
+import { stripComments, stripLineContinuations } from "../utils/text";
 import { type FunctionMacroDefinition, safeEval } from "./expression";
 import {
   SymbolConditionalDefinition,
@@ -372,6 +372,9 @@ export async function collectDefinesAndConsts(
       continue;
     }
 
+    // Process line continuations before splitting into lines
+    text = stripLineContinuations(text);
+
     const lines = text.split(/\r?\n/);
     const conditionalStack: ConditionalFrame[] = [];
     let currentCondition: string | null = null;
@@ -553,3 +556,4 @@ export async function collectDefinesAndConsts(
     locations,
   };
 }
+

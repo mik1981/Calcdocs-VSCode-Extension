@@ -95,7 +95,7 @@ CalcDocs helps firmware, embedded, and software teams keep formulas, documentati
 
 ## 📦 Install from `.vsix` File (Quick Guide)
 
-If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.6.vsix` to install it without going through the Marketplace.
+If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.7.vsix` to install it without going through the Marketplace.
 
 **Graphical method (recommended):**
 
@@ -109,7 +109,7 @@ If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.6.vsix
 **Terminal method (optional):**
 
 ```bash
-code --install-extension calcdocs-vscode-extension-0.1.6.vsix
+code --install-extension calcdocs-vscode-extension-0.1.7.vsix
 ```
 
 **Verify the installation:**
@@ -203,6 +203,7 @@ The node_modules directory contains all `npm` dependencies required to build and
 - Status bar quick refresh and periodic background analysis.
 - Runtime CPU/RAM monitor with a quick ON/OFF toggle from status bar.
 - C/C++ function-like macro support with parameter expansion (e.g., `#define MY_MACRO(x) ((x) * 2)`).
+- RHS macro evaluation in hover: hovering over macro calls within #define statements shows computed results.
 - Configurable thousands separator for formatted numbers.
 - Preprocessor conditional tracking (`#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`).
 - Ambiguity detection for symbols with multiple conditional definitions.
@@ -218,6 +219,7 @@ The node_modules directory contains all `npm` dependencies required to build and
 | `CalcDocs: Set Scan Interval` | Sets periodic scan interval in seconds (`0` disables periodic scan/watchers) |
 | `CalcDocs: Show Log Output` | Show console CalcDocs output |
 | `CalcDocs: Toggle Enable/Disable extension` | Enables/disables CalcDocs at runtime without uninstalling it |
+| `CalcDocs: Open Extension Test Folder` | Opens the extension's test folder in a new VS Code window |
 | Status bar button `CalcDocs` | Manual formula refresh |
 
 ---
@@ -233,6 +235,7 @@ Available workspace settings:
 - `calcdocs.resourceStatusMode` (`always` or `aboveCpuThreshold`, controls runtime status bar visibility)
 - `calcdocs.resourceCpuThreshold` (number 0-100, default `70`, used when mode is `aboveCpuThreshold`)
 - `calcdocs.thousandsSeparator` (`none`, `space`, `dot`, `comma`, `apostrophe`, `narrowNoBreakSpace`, default `space`)
+- `calcdocs.internalDebugMode` (`error`, `warn`, `info`, `debug`, `detail`, `silent`, default `info`)
 
 ---
 

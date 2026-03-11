@@ -83,10 +83,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Carica la configurazione dell'estensione
   let config = getConfig();
-  
+
   // Crea lo stato iniziale dell'estensione per il workspace
   const state = createCalcDocsState(workspaceRoot, coloredOutput);
   state.enabled = config.enabled;
+
+  state.output.setLevel(config.internalDebugMode);
 
   // Crea gli elementi della status bar
   statusBar = createStatusBar(context);

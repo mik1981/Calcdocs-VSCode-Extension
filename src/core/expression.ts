@@ -1175,19 +1175,56 @@ export function resolveInlineLookups(
 }
 
 /**
- * Removes one or more outer parenthesis layers from an expression.
- * Example: "((A + B))" -> "A + B"
+ * Removes outer parenthesis layers only when they are truly redundant.
+ * A parenthesis layer is redundant when:
+ * - The inner expression is a pure numeric literal (already resolved), OR
+ * - The inner expression can be successfully evaluated numerically
+ * 
+ * Parentheses are kept when they are meaningful, such as:
+ * - C-style type casts: "(unsigned int)(value)"
+ * - Expressions with unresolved symbols that can't be evaluated
+ * 
+ * Examples:
+ * - "((42))" -> "42" (pure numeric - redundant)
+ * - "(unsigned int)(0.5 + ...)" -> "(unsigned int)(0.5 + ...)" (kept - C cast)
+ * - "(3.14)" -> "3.14" (evaluable - redundant)
  */
-function unwrapParens(expr: string): string {
+export function unwrapParens(expr: string): string {
   let value = expr.trim();
 
+  // Remove trailing semicolon if present
+  if (value.endsWith(";")) {
+    const inner = value.slice(0, -1).trim();
+    if (inner) {
+      value = inner;
+    }
+  }
+
+  // Only remove outer parentheses if they're truly redundant
+  // (i.e., the inner content is already a numeric literal or evaluates to a number)
   while (value.startsWith("(") && value.endsWith(")")) {
     const inner = value.slice(1, -1).trim();
     if (!inner) {
       break;
     }
 
-    value = inner;
+    // If the inner expression is a pure numeric literal, parentheses are redundant
+    if (isPureNumericExpression(inner)) {
+      value = inner;
+      continue;
+    }
+
+    // Try to evaluate the inner expression - if it succeeds, parentheses are redundant
+    try {
+      const evaluated = safeEval(inner, {});
+      // Evaluation succeeded - parentheses are redundant, use the inner expression
+      value = inner;
+      continue;
+    } catch {
+      // Evaluation failed - contains unresolved symbols or invalid syntax
+      // Keep the parentheses (they might be a C-style cast or meaningful grouping)
+      break;
+    }
   }
 
   return value;
@@ -1765,19 +1802,19 @@ export function buildCompositeExpressionPreview(
   try {
     const value = safeEval(evaluableExpanded, context);
     return {
-      expanded: simplifiedExpanded,
+      expanded: unwrapParens(simplifiedExpanded),
       value,
     };
   } catch {
     try {
       const value = safeEval(simplifiedExpanded, context);
       return {
-        expanded: simplifiedExpanded,
+        expanded: unwrapParens(simplifiedExpanded),
         value,
       };
     } catch {
       return {
-        expanded: simplifiedExpanded,
+        expanded: unwrapParens(simplifiedExpanded),
         value: null,
       };
     }

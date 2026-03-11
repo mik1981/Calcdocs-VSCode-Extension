@@ -147,6 +147,11 @@
             "%config.thousandsSeparator.narrowNoBreakSpace%"
           ],
           "description": "%config.thousandsSeparator%"
+        },
+        "calcdocs.internalDebugMode": {
+          "type": "string",
+          "default": "info",
+          "enum": ["error", "warn", "info", "debug", "detail", "silent"]
         }
       }
     },

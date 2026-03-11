@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import { CalcDocsState } from "./state";
+import { LogLevel } from "../utils/output";
 
 /**
  * Modalità di visualizzazione dello stato delle risorse nella status bar.
@@ -39,6 +40,8 @@ export type CalcDocsConfig = {
   resourceCpuThreshold: number;
   /** Separatore delle migliaia per i numeri formattati */
   thousandsSeparator: ThousandsSeparator;
+  /** livello di log nell'output console */
+  internalDebugMode: LogLevel;
 };
 
 /**
@@ -76,6 +79,13 @@ export function getConfig(): CalcDocsConfig {
       ? thousandsSeparatorValue as ThousandsSeparator
       : "space";
 
+  // Leggi il livello di log
+  const internalDebugModeValue = cfg.get<string>("internalDebugMode", "");
+  const internalDebugMode: LogLevel = internalDebugModeValue as LogLevel;
+    // ["none", "space", "dot", "comma", "apostrophe", "narrowNoBreakSpace"].includes(internalDebugModeValue)
+    //   ? internalDebugModeValue as LogLevel
+    //   : "";
+
   return {
     enabled: cfg.get<boolean>("enabled", true),
     scanInterval:
@@ -85,6 +95,7 @@ export function getConfig(): CalcDocsConfig {
     resourceStatusMode,
     resourceCpuThreshold,
     thousandsSeparator,
+    internalDebugMode    
   };
 }
 

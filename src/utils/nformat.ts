@@ -2,6 +2,45 @@ import { CalcDocsState } from "../core/state";
 import { getConfig, getThousandsSeparatorChar } from "../core/config";
 
 /**
+ * Checks if a number is an integer (no fractional part).
+ * @param n - The number to check
+ * @returns true if the number is an integer
+ */
+function isInteger(n: number): boolean {
+  return Number.isFinite(n) && n === Math.floor(n);
+}
+
+/**
+ * Converts a number to a formatted hexadecimal string with 4-digit grouping.
+ * Examples:
+ * - 1024 → "0x0400"
+ * - 65536 → "0x0001_0000"
+ * - 255 → "0x00FF"
+ * - 0 → "0x0000"
+ * 
+ * @param n - The number to convert
+ * @returns The formatted hex string
+ */
+export function toHexString(n: number): string {
+  if (!isInteger(n) || n < 0) {
+    return "";
+  }
+  
+  const hex = n.toString(16).toUpperCase();
+  const padded = hex.padStart(Math.ceil(hex.length / 4) * 4, "0");
+  
+  // Add underscore every 4 digits from the left
+  const groups: string[] = [];
+  for (let i = 0; i < padded.length; i += 4) {
+    groups.push(padded.slice(i, i + 4));
+  }
+  
+  const config = getConfig();
+  const separator = getThousandsSeparatorChar(config.thousandsSeparator);
+  return "0x" + groups.join(separator);
+}
+
+/**
  * Adds high dot (⋅) as thousands separator to all numbers in a string.
  * Example: "value is 1234567" → "value is 1⋅234⋅567"
  *
@@ -46,7 +85,7 @@ export function formatNumbersWithThousandsSeparator(state: CalcDocsState, text: 
     return formattedInteger;
   });
 
-  state.output.detail(`${text} → ${ret}`)
+  // state.output.detail(`${text} → ${ret}`)
   return ret
 }
 

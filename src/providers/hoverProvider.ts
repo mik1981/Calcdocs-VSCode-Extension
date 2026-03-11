@@ -1,3 +1,18 @@
+/**
+ * Hover Provider per simboli C/C++ in VSCode.
+ * 
+ * Questo modulo gestisce la visualizzazione delle informazioni relative ai simboli
+ * quando l'utente passa il mouse sopra di essi nel codice sorgente C/C++.
+ * 
+ * Il provider supporta:
+ * - Valutazione di macro funzione (es. FINAL(VEL*MUL))
+ * - Visualizzazione di formule definite in YAML
+ * - Rilevamento di definizioni multiple (ambiguità)
+ * - Definizioni condizionali del preprocessore (#ifdef, #ifndef)
+ * 
+ * @module providers/hoverProvider
+ */
+
 import * as vscode from "vscode";
 
 import { parseCppSymbolDefinition } from "../core/cppParser";
@@ -6,17 +21,82 @@ import {
 } from "../core/expression";
 import { CalcDocsState } from "../core/state";
 import { pickWord } from "../utils/editor";
-import { formatNumbersWithThousandsSeparator } from "../utils/nformat";
+import { formatNumbersWithThousandsSeparator, toHexString } from "../utils/nformat";
 import { updateBraceDepth } from "../utils/braceDepth";
+import { FUNCTION_DEFINE_RX, OBJECT_DEFINE_RX, DEFINE_NAME_RX }from "../utils/regex";
+import { stripComments } from "../utils/text";
+import { isNumber } from "util";
 
+// =============================================================================
+// COSTANTI DI CONFIGURAZIONE
+// =============================================================================
+
+/** Numero massimo di varianti condizionali da mostrare nella sezione hover */
 const HOVER_VARIANT_LIMIT = 8;
+
+/** Numero massimo di definizioni nello stesso documento da mostrare */
 const HOVER_IN_DOC_DEFINITION_LIMIT = 6;
+
+/** Regex per rilevare direttive #define */
 const DEFINE_DIRECTIVE_RX = /^\s*#\s*define\b/;
 
+// =============================================================================
+// TIPI DI SUPPORTO
+// =============================================================================
+
 /**
- * Extracts a full function-like macro call expression at the cursor position.
- * Returns the complete expression including the function name and its arguments,
- * or null if the cursor is not inside a function-like macro call.
+ * Rappresenta una definizione di simbolo trovata nel documento.
+ * 
+ * @example
+ * // Esempio di oggetto restituito:
+ * {
+ *   expr: "#define MAX_BUFFER 1024",
+ *   line: 42
+ * }
+ */
+type SymbolDefinitionInDocument = {
+  /** Espressione completa della definizione (es. "#define FOO 42") */
+  expr: string;
+  /** Numero di linea (0-based) dove appare la definizione */
+  line: number;
+};
+
+/**
+ * Risultato dell'estrazione di una chiamata macro.
+ * 
+ * @example
+ * // Input: "FINAL(VEL * MUL)" con cursore su FINAL
+ * // Output: "FINAL(VEL * MUL)"
+ */
+type MacroCallExtraction = {
+  /** La chiamata macro completa estratta (nome + argomenti) */
+  call: string;
+  /** Il nome della macro senza argomenti */
+  name: string;
+};
+
+// =============================================================================
+// SEZIONE 1: ESTRAZIONE MACRO
+// =============================================================================
+
+/**
+ * Estrae una chiamata di macro funzione alla posizione del cursore.
+ * 
+ * Questa funzione analizza il testo intorno al cursore per determinare se
+ * l'utente sta passando sopra una chiamata di macro funzione (es. `MACRO(arg1, arg2)`).
+ * 
+ * @param document - Il documento VSCode corrente
+ * @param position - La posizione del cursore
+ * @returns La chiamata macro completa (es. "FINAL(VEL*MUL)") o null se non trovata
+ * 
+ * @example
+ * // Supponiamo che il cursore sia su "FINAL" in questa riga:
+ * // result = FINAL(VEL * MUL)
+ * // La funzione restituirà: "FINAL(VEL * MUL)"
+ * 
+ * @example
+ * // Se il cursore è su un identificatore normale (non parte di una macro),
+ * // la funzione restituirà: null
  */
 function extractFunctionMacroCall(
   document: vscode.TextDocument,
@@ -25,29 +105,35 @@ function extractFunctionMacroCall(
   const line = document.lineAt(position.line).text;
   const lineUntilCursor = line.slice(0, position.character);
 
-  // Find the start of a potential identifier before the cursor
+  // Trova l'inizio di un potenziale identificatore prima del cursore
+  // Scorre a sinistra finché non trova un carattere non valido per un identificatore
   let start = lineUntilCursor.length - 1;
   while (start >= 0 && /[A-Za-z_]/.test(line[start])) {
     start -= 1;
   }
   start += 1;
 
+  // Verifica che ci sia effettivamente un identificatore
   if (start >= lineUntilCursor.length) {
     return null;
   }
 
   const potentialName = line.slice(start, lineUntilCursor.length);
+  
+  // Verifica che il nome sia un identificatore C valido
   if (!/^[A-Za-z_]\w*$/.test(potentialName)) {
     return null;
   }
 
-  // Check if there's an opening parenthesis after the identifier (allowing whitespace)
+  // Verifica che ci sia una parentesi aperta dopo l'identificatore
+  // (permette spazi bianchi tra nome e parentesi)
   const afterName = lineUntilCursor.slice(start + potentialName.length).match(/^\s*\(/);
   if (!afterName) {
     return null;
   }
 
-  // Find the matching closing parenthesis
+  // Trova la parentesi di chiusura corrispondente
+  // Tiene conto di parentesi annidate, parentesi quadre e stringhe
   let depth = 0;
   let end = start + potentialName.length + afterName[0].length - 1;
 
@@ -63,10 +149,12 @@ function extractFunctionMacroCall(
         break;
       }
     } else if (char === '"' || char === "'") {
+      // Gestione delle stringhe e caratteri (evita che ) dentro stringhe chiuda la macro
       const quote = char;
       end += 1;
       while (end < line.length) {
         if (line[end] === "\\") {
+          // Salta i caratteri di escape
           end += 2;
           continue;
         }
@@ -82,6 +170,7 @@ function extractFunctionMacroCall(
     end += 1;
   }
 
+  // Verifica che le parentesi siano bilanciate
   if (depth !== 0) {
     return null;
   }
@@ -90,23 +179,209 @@ function extractFunctionMacroCall(
   return expr || null;
 }
 
+/**
+ * Prova a estrarre una chiamata macro usando un approccio regex di fallback.
+ * 
+ * Questo metodo viene usato quando extractFunctionMacroCall non trova nulla.
+ * Utilizza una regex per trovare pattern del tipo IDENTIFICATORE(...).
+ * 
+ * @param fullLine - La riga completa di codice
+ * @returns La chiamata macro trovata o null
+ * 
+ * @example
+ * // Input: "#define RESULT (VALUE * 2)"
+ * // Output: null (non è una chiamata, è una definizione)
+ * 
+ * @example
+ * // Input: "x = FINAL(VALUE * MULT);"
+ * // Output: "FINAL(VALUE * MULT)"
+ */
+function extractMacroCallWithRegex(fullLine: string): string | null {
+
+  const match = fullLine.match(/([A-Za-z_]\w*)\s*\((.*)\)/);
+
+  if (!match) {
+    return null;
+  }
+
+  const call = match[0];
+
+  // evita casi tipo "#define VALUE (A*B)"
+  if (/^\s*#\s*define/.test(fullLine)) {
+    return null;
+  }
+
+  return call;
+}
+
+/**
+ * Cerca una chiamata macro nella parte destra di una direttiva #define.
+ * 
+ * @param defineLine - La riga #define completa
+ * @returns La chiamata macro trovata o null
+ * 
+ * @example
+ * // Input: "#define CALC(x) (x * MULT)"
+ * // Output: null (la parte destra è un'espressione, non una chiamata)
+ * 
+ * @example
+ * // Input: "#define COMPOSED FINAL(INNER(VALUE))"
+ * // Output: "FINAL(INNER(VALUE))"
+ */
+function extractMacroCallFromDefineRightSide(line: string): string | null {
+
+  // rimuove eventuali commenti //
+  const noComment = line.split("//")[0];
+
+  const defineMatch = noComment.match(/^\s*#\s*define\s+[A-Za-z_]\w*\s+(.*)$/);
+  if (!defineMatch) {
+    return null;
+  }
+
+  const rhs = defineMatch[1].trim();
+
+  // trova nome macro
+  const nameMatch = rhs.match(/^([A-Za-z_]\w*)\s*\(/);
+  if (!nameMatch) {
+    return null;
+  }
+
+  const macroName = nameMatch[1];
+  let pos = nameMatch[0].length - 1; // posizione della "("
+
+  let depth = 0;
+  let end = pos;
+
+  while (end < rhs.length) {
+
+    const ch = rhs[end];
+
+    if (ch === "(") {
+      depth++;
+    }
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) {
+        end++;
+        break;
+      }
+    }
+    else if (ch === '"' || ch === "'") {
+      // salta stringhe
+      const quote = ch;
+      end++;
+      while (end < rhs.length) {
+        if (rhs[end] === "\\") {
+          end += 2;
+          continue;
+        }
+        if (rhs[end] === quote) {
+          break;
+        }
+        end++;
+      }
+    }
+
+    end++;
+  }
+
+  if (depth !== 0) {
+    return null;
+  }
+
+  return rhs.slice(0, end).trim();
+}
+
+/**
+ * Normalizza una chiamata macro per una visualizzazione più pulita.
+ * 
+ * Rimuove spazi superflui, standardizza parentesi e operatori.
+ * 
+ * @param call - La chiamata macro originale
+ * @returns La chiamata normalizzata
+ * 
+ * @example
+ * // Input: "FINAL( VEL * MUL )"
+ * // Output: "FINAL(VEL*MUL)"
+ * 
+ * @example
+ * // Input: "MAX( a , b )"
+ * // Output: "MAX(a,b)"
+ */
+function normalizeMacroCallForDisplay(call: string): string {
+  let s = call;
+  
+  // Rimuove spazi intorno alle parentesi
+  s = s.replace(/\s+\(/g, "(");
+  s = s.replace(/\(\s+/g, "(");
+  s = s.replace(/\s+\)/g, ")");
+  s = s.replace(/\)\s+/g, ")");
+  
+  // Rimuove spazi intorno alle virgole
+  s = s.replace(/\s*,\s*/g, ",");
+  
+  // Rimuove spazi intorno agli operatori
+  s = s.replace(/\s*([+\-*/%|&^<>])\s*/g, "$1");
+  
+  // Rimuove spazi multipli residui
+  s = s.replace(/\s+/g, " ").trim();
+  
+  return s;
+}
+
+// =============================================================================
+// SEZIONE 2: RICERCA DEFINIZIONI SIMBOLI
+// =============================================================================
+
+/**
+ * Trova tutte le definizioni di un simbolo in un documento.
+ * 
+ * Questa funzione scorre tutte le righe del documento cercando definizioni
+ * che corrispondono al nome del simbolo. Tiene conto della profondità delle
+ * parentesi graffe per evitare di catturare dichiarazioni all'interno di
+ * struct o blocchi.
+ * 
+ * @param document - Il documento VSCode dove cercare
+ * @param word - Il nome del simbolo da cercare
+ * @returns Array di oggetti contenenti l'espressione e la linea di ogni definizione
+ * 
+ * @example
+ * // Contenuto del documento:
+ * // 0: #define VALUE 10
+ * // 1: #define VALUE 20
+ * // 3: int x = VALUE;
+ * // 
+ * // Chiamata: findSymbolDefinitionsInDocument(doc, "VALUE")
+ * // Output: [
+ * //   { expr: "#define VALUE 10", line: 0 },
+ * //   { expr: "#define VALUE 20", line: 1 }
+ * // ]
+ */
 function findSymbolDefinitionsInDocument(
   document: vscode.TextDocument,
   word: string
-): Array<{ expr: string; line: number }> {
+): Array<SymbolDefinitionInDocument> {
   const lines = document.getText().split(/\r?\n/);
-  const definitions: Array<{ expr: string; line: number }> = [];
+  const definitions: Array<SymbolDefinitionInDocument> = [];
   let braceDepth = 0;
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
+    
+    // Può parsare la dichiarazione solo se:
+    // 1. Non siamo all'interno di un blocco ({})
+    // 2. Oppure la riga è una direttiva #define (sempre parsabile)
     const canParseDeclaration = braceDepth === 0 || DEFINE_DIRECTIVE_RX.test(line);
+    
     const parsed = canParseDeclaration ? parseCppSymbolDefinition(line) : undefined;
+    
+    // Se il parsed non corrisponde al simbolo cercato, aggiorna solo la profondità
     if (!parsed || parsed.name !== word) {
       braceDepth = updateBraceDepth(braceDepth, line);
       continue;
     }
 
+    // Trovata una definizione del simbolo
     definitions.push({
       expr: parsed.expr,
       line: i,
@@ -118,11 +393,39 @@ function findSymbolDefinitionsInDocument(
   return definitions;
 }
 
+// =============================================================================
+// SEZIONE 3: FORMATTAZIONE SEZIONI HOVER
+// =============================================================================
+
+/**
+ * Formatta la sezione delle definizioni condizionali multiple.
+ * 
+ * Quando un simbolo ha definizioni multiple dipendenti da condizioni del
+ * preprocessore (#ifdef, #ifndef, #if), questa funzione crea una lista
+ * markdown con tutte le varianti.
+ * 
+ * @param word - Il nome del simbolo
+ * @param state - Lo stato dell'estensione contenente le definizioni condizionali
+ * @returns Stringa markdown con la lista delle varianti, o null se non applicabile
+ * 
+ * @example
+ // Stato: symbolConditionalDefs.get("DEBUG") = [
+ //   { file: "main.c", line: 10, expr: "#define DEBUG 1", condition: "!defined(RELEASE)" },
+ //   { file: "main.c", line: 20, expr: "#define DEBUG 0", condition: "defined(RELEASE)" }
+ // ]
+ // 
+ // Output:
+ // "**Multiple C/C++ definitions:**
+ // - when `!defined(RELEASE)`: `#define DEBUG 1` (`main.c:11`)
+ // - when `defined(RELEASE)`: `#define DEBUG 0` (`main.c:21`)"
+ */
 function formatConditionalDefinitionsSection(
   word: string,
   state: CalcDocsState
 ): string | null {
   const variants = state.symbolConditionalDefs.get(word);
+  
+  // Non mostrare se c'è 0 o 1 variante
   if (!variants || variants.length <= 1) {
     return null;
   }
@@ -137,6 +440,7 @@ function formatConditionalDefinitionsSection(
     );
   }
 
+  // Aggiungi il conteggio delle varianti non mostrate
   if (variants.length > shown.length) {
     lines.push(`- ...and ${variants.length - shown.length} more`);
   }
@@ -144,17 +448,42 @@ function formatConditionalDefinitionsSection(
   return lines.join("\n");
 }
 
+/**
+ * Formatta la sezione delle definizioni multiple nello stesso documento.
+ * 
+ * Quando ci sono multiple definizioni dello stesso simbolo nel file corrente
+ * (ma non tracciate come condizionali), mostra un elenco delle definizioni.
+ * 
+ * @param word - Il nome del simbolo
+ * @param document - Il documento VSCode corrente
+ * @param state - Lo stato dell'estensione
+ * @param inDocumentDefinitions - Array delle definizioni trovate nel documento
+ * @returns Stringa markdown o null
+ * 
+ * @example
+ // Documento:
+ // 5:  #define BUFFER_SIZE 256
+ // 10: #define BUFFER_SIZE 512
+ // 
+ // Output:
+ // "**Multiple definitions found in current file:**
+ // - `#define BUFFER_SIZE 256` (`test.c:6`)
+ // - `#define BUFFER_SIZE 512` (`test.c:11`)"
+ */
 function formatInDocumentMultipleDefinitionsSection(
   word: string,
   document: vscode.TextDocument,
   state: CalcDocsState,
-  inDocumentDefinitions: Array<{ expr: string; line: number }>
+  inDocumentDefinitions: Array<SymbolDefinitionInDocument>
 ): string | null {
   const trackedVariants = state.symbolConditionalDefs.get(word);
+  
+  // Non mostrare se ci sono già varianti condizionali tracciate
   if (trackedVariants && trackedVariants.length > 1) {
     return null;
   }
 
+  // Non mostrare se c'è solo una definizione nel documento
   if (inDocumentDefinitions.length <= 1) {
     return null;
   }
@@ -176,6 +505,23 @@ function formatInDocumentMultipleDefinitionsSection(
   return lines.join("\n");
 }
 
+/**
+ * Formatta la sezione dell'ambiguità eredata.
+ * 
+ * Quando un simbolo ha un valore che dipende da altri simboli ambigui,
+ * questa funzione elenca questi simboli "genitori".
+ * 
+ * @param word - Il nome del simbolo
+ * @param state - Lo stato dell'estensione
+ * @returns Stringa markdown o null
+ * 
+ * @example
+ // Stato: symbolAmbiguityRoots.get("RESULT") = ["VALUE", "MULTIPLIER"]
+ // (significa che RESULT dipende da simboli con definizioni multiple)
+ // 
+ // Output:
+ // "**Depends on symbols with multiple definitions:** `VALUE`, `MULTIPLIER`"
+ */
 function formatInheritedAmbiguitySection(
   word: string,
   state: CalcDocsState
@@ -185,6 +531,7 @@ function formatInheritedAmbiguitySection(
     return null;
   }
 
+  // Filtra fuori il simbolo stesso (per evitare auto-riferimenti)
   const inheritedFrom = roots.filter((name) => name !== word);
   if (inheritedFrom.length === 0) {
     return null;
@@ -195,6 +542,25 @@ function formatInheritedAmbiguitySection(
   )}\``;
 }
 
+// =============================================================================
+// SEZIONE 4: GESTIONE FORMULE
+// =============================================================================
+
+/**
+ * Crea un link command per aprire la fonte della formula.
+ * 
+ * @param word - Il nome della formula
+ * @param formula - L'oggetto formula contenente _filePath e _line
+ * @returns Stringa markdown con il link, o null se mancano i dati
+ * 
+ * @example
+ // Input:
+ // word = "VOLTAGE_DIVIDER"
+ // formula = { _filePath: "formulas.yaml", _line: 42, formula: "R1/(R1+R2)*Vin" }
+ // 
+ // Output:
+ // "[Open formula source (formulas.yaml:43)](command:calcdocs.fixMismatch?%5B%22VOLTAGE_DIVIDER%22%5D)"
+ */
 function buildOpenFormulaCommandLink(
   word: string,
   formula: { _filePath?: string; _line?: number }
@@ -210,18 +576,242 @@ function buildOpenFormulaCommandLink(
 }
 
 /**
- * Registers hover provider for C/C++ symbols.
- * Hover includes computed value plus linked YAML formula details when available.
+ * Formatta la sezione della formula YAML nel hover.
+ * 
+ * @param word - Il nome del simbolo
+ * @param state - Lo stato dell'estensione
+ * @param sections - Array delle sezioni da aggiornare
+ * 
+ * @example
+ // Formula nel state.formulaIndex:
+ // "RESISTOR_OHMS" -> {
+ //   key: "RESISTOR_OHMS",
+ //   unit: "Ω",
+ //   formula: "R_REF * (1023/ADC - 1)",
+ //   expanded: "1000 * (1023/512 - 1)",
+ //   valueCalc: 998.0,
+ //   steps: ["Calcolo: (1023/512)", "Moltiplicazione per R_REF"]
+ // }
+ // 
+ // Sezioni generate:
+ // "### RESISTOR_OHMS  \n*Unit:* `Ω`"
+ // "*Steps:*\n  - `Calcolo: (1023/512)`\n  - `Moltiplicazione per R_REF`"
+ // "*Formula:* **`R_REF * (1023/ADC - 1)`**"
+ // "**`1000 * (1023/512 - 1)`** → `998`"
+ */
+function appendFormulaSection(
+  word: string,
+  state: CalcDocsState,
+  sections: string[]
+): void {
+  const formula = state.formulaIndex.get(word);
+  
+  if (!formula) {
+    return;
+  }
+
+  state.output.detail(`Formula found for ${word}`);
+  
+  // Inizia con il titolo della formula e l'unità opzionale
+  sections.push(
+    `### ${formula.key}${formula.unit ? `  \n*Unit:* \`${formula.unit}\`` : ""}`
+  );
+
+  // Aggiungi i passaggi di calcolo se presenti
+  if (formula.steps && Array.isArray(formula.steps) && formula.steps.length > 0) {
+    const stepLines = formula.steps.map((s) => `  - \`${s}\``).join("\n");
+    sections.push(`*Steps:*\n${stepLines}`);
+  }
+
+  // Aggiungi la formula originale
+  if (formula.formula) {
+    sections.push(`*Formula:* **\`${formula.formula}\`**`);
+  }
+
+  // Aggiungi l'espressione espansa e il valore calcolato
+  if (formula.expanded) {
+    let valueStr = "";
+    if (typeof formula.valueCalc === "number") {
+      // Formatta il valore decimale
+      const decimalStr = formatNumbersWithThousandsSeparator(state, `${formula.valueCalc}`);
+      // Se è un intero positivo, mostra anche la versione esadecimale
+      const hexValue = toHexString(formula.valueCalc);
+      if (hexValue) {
+        valueStr = ` → \`${decimalStr}\` (${hexValue})`;
+      } else {
+        valueStr = ` → \`${decimalStr}\``;
+      }
+    }
+    sections.push(
+      formatNumbersWithThousandsSeparator(state, `**\`${formula.expanded}\`**${valueStr}`)
+    );
+  }
+
+  // Aggiungi il link per aprire la formula
+  const openFormulaLink = buildOpenFormulaCommandLink(word, formula);
+  if (openFormulaLink) {
+    sections.push(openFormulaLink);
+  }
+}
+
+/**
+ * Aggiunge il valore numerico noto del simbolo alla sezione hover.
+ * 
+ * @param word - Il nome del simbolo
+ * @param state - Lo stato dell'estensione
+ * @param sections - Array delle sezioni da aggiornare
+ * 
+ * @example
+ // stato.symbolValues.get("MAX_BUFFER") = 1024
+ // 
+ // Output aggiunto a sections:
+ // "MAX_BUFFER = **1024**"
+ */
+function appendKnownValueSection(
+  word: string,
+  state: CalcDocsState,
+  sections: string[]
+): void {
+  // Se non c'è una formula, cerca almeno il valore numerico noto
+  if (!state.formulaIndex.has(word) && state.symbolValues.has(word)) {
+    const knownValue = state.symbolValues.get(word);
+    if (typeof knownValue === "number") {
+      // Formatta il valore decimale
+      const decimalStr = formatNumbersWithThousandsSeparator(state, `${knownValue}`);
+      
+      // Se è un intero positivo, mostra anche la versione esadecimale
+      const hexValue = toHexString(knownValue);
+      if (hexValue) {
+        sections.push(`${word} = **${decimalStr}** (${hexValue})`);
+      } else {
+        sections.push(`${word} = **${decimalStr}**`);
+      }
+    }
+  }
+}
+
+// =============================================================================
+// SEZIONE 5: VALUTAZIONE MACRO
+// =============================================================================
+
+/**
+ * Valuta una chiamata macro e genera il contenuto della sezione hover.
+ * 
+ * Questa funzione usa buildCompositeExpressionPreview per espandere e valutare
+ * la macro, poi formatta il risultato per la visualizzazione.
+ * 
+ * @param macroCall - La chiamata macro da valutare (es. "FINAL(VEL*MUL)")
+ * @param state - Lo stato dell'estensione
+ * @returns Stringa markdown con il risultato della valutazione
+ * 
+ * @example
+ // Input: macroCall = "FINAL(VEL * MUL)"
+ // Stato: symbolValues = { VEL: 100, MUL: 5 }, allDefines = { FINAL: "x*2" }
+ // 
+ // Preview: { expanded: "100 * 5 * 2", value: 1000 }
+ // 
+ // Output:
+ // "**FINAL(VEL*MUL)**
+ // → **1000**"
+ */
+function evaluateMacroForHover(
+  macroCall: string,
+  state: CalcDocsState
+): string {
+  // Espande e valuta la macro
+  const preview = buildCompositeExpressionPreview(
+    macroCall,
+    state.symbolValues,
+    state.allDefines,
+    state.functionDefines,
+    {},
+    state.defineConditions
+  );
+
+  state.output.detail(`Preview.expanded: ${preview.expanded}`);
+  state.output.detail(`Preview.value: ${preview.value}`);
+
+  // Normalizza la chiamata per visualizzazione (rimuovi prima i commenti)
+  const displayCall = normalizeMacroCallForDisplay(stripComments(macroCall));
+  const sections: string[] = [`${displayCall}`];
+
+  if (preview.value !== null) {
+    // Caso migliore: mostra direttamente il valore calcolato
+    // Se è un intero positivo, mostra anche la versione esadecimale
+    const decimalStr = formatNumbersWithThousandsSeparator(state, `${preview.value}`);
+    const hexValue = toHexString(preview.value);
+    if (hexValue) {
+      sections.push(`→ **${decimalStr}** (${hexValue})`);
+    } else {
+      sections.push(`→ **${decimalStr}**`);
+    }
+  } else {
+    const expanded = (preview.expanded ?? "").trim();
+
+    if (!expanded || expanded === macroCall) {
+      sections.push(`→ \`${displayCall}\``);
+    } else {
+      const expanded_number = Number(expanded);
+      if (isNaN(expanded_number)) {
+        sections.push(`→ **${expanded}**`);
+      } else {
+        sections.push(`→ **${expanded}** (${toHexString(expanded_number)})`);
+      }
+    }
+  }
+
+  return sections.join(" ");
+}
+
+// =============================================================================
+// SEZIONE 6: GESTIONE DEBUG
+// =============================================================================
+
+/**
+ * Helper per loggare messaggi di debug (solo se abilitati).
+ * 
+ * @param state - Lo stato dell'estensione
+ * @param message - Il messaggio da loggare
+ */
+function debugLog(state: CalcDocsState, message: string): void {
+  state.output.detail(message);
+}
+
+// =============================================================================
+// SEZIONE 7: PROVIDER PRINCIPALE
+// =============================================================================
+
+/**
+ * Registra il provider hover per simboli C/C++.
+ * 
+ * Questa funzione crea e registra un HoverProvider che:
+ * 1. Rileva simboli sotto il cursore
+ * 2. Prova a estrarre chiamate macro
+ * 3. Cerca definizioni nel documento e nel workspace
+ * 4. Costruisce il contenuto hover con formule, valori eambiguità
+ * 
+ * @param context - Contesto dell'estensione VSCode
+ * @param state - Stato condiviso dell'estensione (contiene formule, valori, definizioni)
+ * @param enableCppProviders - Flag per abilitare/disabilitare il provider
+ * 
+ * @example
+ // Il provider risponderà a hover su file .c e .cpp mostrando:
+ // - Valori numerici dei simboli (es. "MAX_BUFFER = **1024**")
+ // - Formule YAML associate (es. "### RESISTOR_OHMS")
+ // - Definizioni multiple (es. "Multiple definitions found...")
+ // - Chiamate macro valutate (es. "FINAL(VEL*MUL) → **1000**")
  */
 export function registerCppHoverProvider(
   context: vscode.ExtensionContext,
   state: CalcDocsState,
   enableCppProviders: boolean
 ): void {
+  // Esce subito se i provider C/C++ sono disabilitati
   if (!enableCppProviders) {
     return;
   }
 
+  // Selettori per i file C/C++ (sia file system che untitled)
   const cppSelectors: vscode.DocumentSelector = [
     { language: "c", scheme: "file" },
     { language: "cpp", scheme: "file" },
@@ -232,157 +822,205 @@ export function registerCppHoverProvider(
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(cppSelectors, {
       provideHover(document, position) {
+        // =====================================================================
+        // PASSO 1: Controlla se l'estensione è abilitata
+        // =====================================================================
         if (!state.enabled) {
-          state.output.debug("Hover ignored: state.disabled");
+          debugLog(state, "Hover ignored: state.disabled");
           return undefined;
         }
 
+        // =====================================================================
+        // PASSO 2: Estrai il simbolo sotto il cursore
+        // =====================================================================
         const word = pickWord(document, position);
         if (!word) {
-          state.output.debug("No word found at position");
+          debugLog(state, "No word found at position");
           return undefined;
         }
-        state.output.debug(`Hover word detected: ${word}`);
+        debugLog(state, `Hover word detected: ${word}`);
 
+        // Ottieni il range della parola per il hover
         const range = document.getWordRangeAtPosition(position, /[A-Za-z_]\w*/);
         if (!range) {
-          state.output.debug("No identifier range found");
+          debugLog(state, "No identifier range found");
           return undefined;
         }
 
+        // =====================================================================
+        // PASSO 3: Rileva se siamo su una riga #define
+        // =====================================================================
         const fullLine = document.lineAt(position.line).text;
         const isDefineLine = DEFINE_DIRECTIVE_RX.test(fullLine);
 
-        state.output.debug(`Full line: ${fullLine}`);
-        state.output.debug(`Is define line: ${isDefineLine}`);
+        debugLog(state, `Full line: ${fullLine}`);
+        debugLog(state, `Is define line: ${isDefineLine}`);
 
-        // --- 1) Prova ad estrarre macro-call dal cursore
+        // =====================================================================
+        // PASSO 4: Prova ad estrarre chiamata macro dalla posizione del cursore
+        // =====================================================================
         let functionMacroCall = extractFunctionMacroCall(document, position);
-        state.output.debug(`Function macro detected by extractFunctionMacroCall(): ${functionMacroCall}`);
+        debugLog(state, `Function macro detected: ${functionMacroCall}`);
 
-        // --- 2) Fallback regex (valido anche su righe #define)
-        const fallbackCallMatch = fullLine.match(/([A-Za-z_]\w*)\s*\([^)]*\)/);
-        const fallbackCall = fallbackCallMatch?.[0] ?? null;
-        state.output.debug(`Fallback macro match: ${fallbackCall ?? "null"}`);
+        // =====================================================================
+        // PASSO 5: Fallback con regex (funziona anche su righe #define)
+        // =====================================================================
+        const fallbackCall = extractMacroCallWithRegex(fullLine);
+        debugLog(state, `Fallback macro match: ${fallbackCall ?? "null"}`);
 
-        // --- 3) Macro individuata complessiva
+        // =====================================================================
+        // PASSO 6: Macro individuata - usa la prima trovata, altrimenti fallback
+        // =====================================================================
         let macroToEvaluate: string | null = functionMacroCall ?? fallbackCall ?? null;
 
-        // --- 4) #define: cerca una call nella parte destra se non trovata
-        if (isDefineLine && !macroToEvaluate) {
-          state.output.debug("Line is a #define: scanning right‑side expression for macro call…");
-          const rightSideMatch = fullLine.match(/([A-Za-z_]\w*\([^)]*\))/);
-          if (rightSideMatch) {
-            macroToEvaluate = rightSideMatch[1];
-            state.output.debug(`Found macro call inside #define → ${macroToEvaluate}`);
-          } else {
-            state.output.debug("No macro call detected inside the define line.");
-          }
-        }
+        const defineMatch = fullLine.match(DEFINE_NAME_RX);
+        const definedMacro = defineMatch?.[1] ?? null;
 
-        // --- 5) Se esiste una macro-call, valutala SOLO se il cursore è sul suo nome
-        if (macroToEvaluate) {
-          const macroName = macroToEvaluate.match(/^([A-Za-z_]\w*)/)?.[1] ?? "";
-          if (word !== macroName) {
-            state.output.debug(
-              `Cursor is on '${word}', but macro '${macroToEvaluate}' refers to '${macroName}' → skipping macro evaluation`
-            );
-            macroToEvaluate = null;
-          }
-        }
+        // =====================================================================
+        // PASSO 7: Gestione speciale delle righe #define
+        // =====================================================================
+        if (isDefineLine) {
 
-        // --- 6) Valutazione macro (se ancora valida dopo il controllo del nome)
-        if (macroToEvaluate) {
-          state.output.debug(`Evaluating macro call: ${macroToEvaluate}`);
+          const functionDefineMatch = fullLine.match(FUNCTION_DEFINE_RX);
+          const objectDefineMatch = fullLine.match(OBJECT_DEFINE_RX);
 
-          const preview = buildCompositeExpressionPreview(
-            macroToEvaluate,
-            state.symbolValues,
-            state.allDefines,
-            state.functionDefines,
-            {},
-            state.defineConditions
-          );
+          // #define MACRO(...)
+          if (functionDefineMatch) {
 
-          state.output.debug(`Preview.expanded: ${preview.expanded}`);
-          state.output.debug(`Preview.value: ${preview.value}`);
+            const macroName = functionDefineMatch[1];
 
-          // Normalizza la call per una resa più pulita (es. FINAL(VEL*MUL))
-          const normalizeCall = (call: string) => {
-            let s = call;
-            s = s.replace(/\s+\(/g, "(");
-            s = s.replace(/\(\s+/g, "(");
-            s = s.replace(/\s+\)/g, ")");
-            s = s.replace(/\)\s+/g, ")");
-            s = s.replace(/\s*,\s*/g, ",");
-            s = s.replace(/\s*([+\-*/%|&^<>])\s*/g, "$1");
-            // Rimuove spazi multipli residui
-            s = s.replace(/\s+/g, " ").trim();
-            return s;
-          };
+            // valuta solo se il cursore è sul nome
+            if (word === macroName) {
 
-          const displayCall = normalizeCall(macroToEvaluate);
-          const sections: string[] = [`**${displayCall}**`];
+              debugLog(state, "Function-like macro definition detected");
 
-            if (preview.value !== null) {
-            // Caso migliore: mostra direttamente il valore
-            sections.push(
-              formatNumbersWithThousandsSeparator(
-                state, 
-                `→ **${preview.value}**`
-              )
-            );
-            } else {
-            // Evita effetti tipo "80 80": se l'espansione è una doppia del medesimo numero, mostralo una sola volta
-            const expanded = (preview.expanded ?? "").trim();
-            if (expanded && expanded !== macroToEvaluate) {
-              const tokens = expanded.split(/\s+/).filter(Boolean);
+              const call = extractMacroCallFromDefineRightSide(fullLine);
 
-              // if two identical numbers → show one
-              const allNumeric = tokens.every((t) => !isNaN(Number(t)));
-              const allSame =
-                allNumeric &&
-                new Set(tokens.map((t) => Number(t))).size === 1;
-
-              if (allSame) {
-                sections.push(`→ **${Number(tokens[0])}**`);
-              } else {
-                // pick first numeric token
-                const firstNum = tokens.find(
-                  (t) => !isNaN(Number(t.replace(/[()]/g, "")))
-                );
-
-                if (firstNum !== undefined) {
-                  const normalized = Number(firstNum.replace(/[()]/g, ""));
-                  sections.push(`→ **${normalized}**`);
-                } else {
-                  sections.push(`→ \`${expanded}\``);
-                }
+              if (call) {
+                macroToEvaluate = call;
               }
+
             } else {
-              // Fallback: nessun valore e nessuna espansione significativa → mostra la call
-              sections.push(`→ \`${displayCall}\``);
-              }
+              macroToEvaluate = null;
             }
 
-          const markdown = new vscode.MarkdownString(sections.join(" "));
-            markdown.isTrusted = true;
+          }
+          // #define VALUE ...
+          else if (objectDefineMatch) {
 
-          state.output.debug("Returning hover from macro evaluation.");
-            return new vscode.Hover(markdown, range);
+            // se il cursore è sulla macro definita → NON valutare
+            if (word === definedMacro) {
+
+              debugLog(
+                state,
+                "Hover on object-like macro name → skipping macro evaluation"
+              );
+
+              macroToEvaluate = null;
+            }
+
+            // se il cursore è su una macro nel RHS → prova a valutarla
+            else {
+
+              const rhsCall = extractMacroCallFromDefineRightSide(fullLine);
+
+              if (rhsCall) {
+
+                const rhsName = rhsCall.match(/^([A-Za-z_]\w*)/)?.[1];
+
+                if (rhsName === word) {
+
+                  debugLog(
+                    state,
+                    "Function-like macro detected in RHS of #define"
+                  );
+
+                  macroToEvaluate = rhsCall;
+                } else {
+                  macroToEvaluate = null;
+                }
+
+              } else {
+                macroToEvaluate = null;
+              }
+            }
+          }
+        }
+        // caso: #define NAME ...
+        else {
+
+          // se il cursore è sulla macro definita → non valutare
+          if (word === definedMacro) {
+
+            debugLog(
+              state,
+              "Hover on object-like macro name → skipping macro evaluation"
+            );
+
+            macroToEvaluate = null;
+
+          } else {
+
+            // se il cursore è su una macro nel RHS → valutala
+            const rhsCall = extractMacroCallFromDefineRightSide(fullLine);
+
+            if (rhsCall) {
+
+              const rhsName = rhsCall.match(/^([A-Za-z_]\w*)/)?.[1];
+
+              if (rhsName === word) {
+
+                debugLog(
+                  state,
+                  "Function-like macro detected in RHS of #define"
+                );
+
+                macroToEvaluate = rhsCall;
+              }
+            }
+          }
         }
 
-        // --- 7) SYMBOL‑LEVEL LOGIC (come prima, con debug)
-        const inDocumentDefinitions = findSymbolDefinitionsInDocument(document, word);
-        state.output.debug(`In-document definitions found: ${inDocumentDefinitions.length}`);
+        // =====================================================================
+        // PASSO 8: Verifica che il cursore sia sul nome della macro
+        // (Non su un argomento!)
+        // =====================================================================
+        
+        // =====================================================================
+        // PASSO 9: Se abbiamo una macro valida, valutala e mostra il risultato
+        // =====================================================================
+        if (macroToEvaluate) {
+          debugLog(state, `Evaluating macro call: ${macroToEvaluate}`);
 
+          const hoverContent = evaluateMacroForHover(macroToEvaluate, state);
+          
+          const markdown = new vscode.MarkdownString(hoverContent);
+          markdown.isTrusted = true;
+
+          debugLog(state, "Returning hover from macro evaluation.");
+          return new vscode.Hover(markdown, range);
+        }
+
+        // =====================================================================
+        // PASSO 10: LOGICA A LIVELLO SIMBOLO
+        // Cerca definizioni nel documento corrente
+        // =====================================================================
+        const inDocumentDefinitions = findSymbolDefinitionsInDocument(document, word);
+        debugLog(state, `In-document definitions found: ${inDocumentDefinitions.length}`);
+
+        // =====================================================================
+        // PASSO 11: Raccogli informazioni sullo stato del simbolo
+        // =====================================================================
         const sections: string[] = [];
         const trackedVariants = state.symbolConditionalDefs.get(word) ?? [];
         const ambiguityRoots = state.symbolAmbiguityRoots.get(word) ?? [];
 
-        state.output.debug(`Tracked variants: ${trackedVariants.length}`);
-        state.output.debug(`Ambiguity roots: ${ambiguityRoots.length}`);
+        debugLog(state, `Tracked variants: ${trackedVariants.length}`);
+        debugLog(state, `Ambiguity roots: ${ambiguityRoots.length}`);
 
+        // =====================================================================
+        // PASSO 12: Determina il tipo di ambiguità
+        // =====================================================================
         const hasTrackedAmbiguity = ambiguityRoots.length > 0;
         const hasInDocumentAmbiguity =
           trackedVariants.length <= 1 && inDocumentDefinitions.length > 1;
@@ -391,18 +1029,21 @@ export function registerCppHoverProvider(
           sections.push(`**${word}: conditional value (multiple possible definitions)**`);
         } else if (hasInDocumentAmbiguity) {
           sections.push(`**${word}: multiple definitions found, value is not unique**`);
-        } 
+        }
 
+        // =====================================================================
+        // PASSO 13: Aggiungi le sezioni informative
+        // =====================================================================
+        
+        // Sezione: definizioni condizionali multiple
         const conditionalDefinitions = formatConditionalDefinitionsSection(word, state);
         if (conditionalDefinitions) {
           sections.push(
-            formatNumbersWithThousandsSeparator(
-              state, 
-              conditionalDefinitions
-            )
+            formatNumbersWithThousandsSeparator(state, conditionalDefinitions)
           );
         }
 
+        // Sezione: definizioni multiple nello stesso documento
         const inDocumentAmbiguitySection = formatInDocumentMultipleDefinitionsSection(
           word,
           document,
@@ -413,51 +1054,31 @@ export function registerCppHoverProvider(
           sections.push(inDocumentAmbiguitySection);
         }
 
+        // Sezione: ambiguità ereditata da altri simboli
         const inheritedAmbiguity = formatInheritedAmbiguitySection(word, state);
         if (inheritedAmbiguity) {
           sections.push(inheritedAmbiguity);
         }
 
-        const formula = state.formulaIndex.get(word);
-        if (formula) {
-          state.output.debug(`Formula found for ${word}`);
-          sections.push(
-            `### ${formula.key}${formula.unit ? `  \n*Unit:* \`${formula.unit}\`` : ""}`
-          );
+        // =====================================================================
+        // PASSO 14: Aggiungi sezione formula (se presente)
+        // =====================================================================
+        appendFormulaSection(word, state, sections);
 
-          if (formula.steps && Array.isArray(formula.steps) && formula.steps.length > 0) {
-            const stepLines = formula.steps.map((s) => `  - \`${s}\``).join("\n");
-            sections.push(`*Steps:*\n${stepLines}`);
-          }
+        // =====================================================================
+        // PASSO 15: Aggiungi valore numerico noto (se nessuna formula)
+        // =====================================================================
+        appendKnownValueSection(word, state, sections);
 
-          if (formula.formula) {
-            sections.push(`*Formula:* **\`${formula.formula}\`**`);
-          }
-
-          if (formula.expanded) {
-            const arrow = typeof formula.valueCalc === "number" ? ` -> \`${formula.valueCalc}\`` : "";
-            sections.push(
-              formatNumbersWithThousandsSeparator(state, `**\`${formula.expanded}\`${arrow}**`)
-            );
-          }
-
-          const openFormulaLink = buildOpenFormulaCommandLink(word, formula);
-          if (openFormulaLink) sections.push(openFormulaLink);
-        } else if (state.symbolValues.has(word)) {
-          const knownValue = state.symbolValues.get(word);
-          if (typeof knownValue === "number") {
-            sections.push(
-              formatNumbersWithThousandsSeparator(state, `${word} = **${knownValue}**`)
-            );
-          }
-        }
-
+        // =====================================================================
+        // PASSO 16: Restituisci il risultato
+        // =====================================================================
         if (sections.length === 0) {
-          state.output.debug("No hover sections generated → returning undefined");
+          debugLog(state, "No hover sections generated → returning undefined");
           return undefined;
         }
 
-        state.output.debug(`Generated hover sections:\n${sections.join("\n---\n")}`);
+        debugLog(state, `Generated hover sections:\n${sections.join("\n---\n")}`);
 
         const markdown = new vscode.MarkdownString(sections.join("\n\n"));
         markdown.isTrusted = true;
@@ -467,3 +1088,4 @@ export function registerCppHoverProvider(
     })
   );
 }
+

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.7
+- Enhanced hover provider with comprehensive documentation and code organization.
+- Added support for RHS (right-hand side) macro evaluation in #define statements: hovering over macro calls within the definition now shows computed results.
+- Enhanced expression evaluation: improved parenthesis stripping logic to avoid removing necessary grouping in arithmetic expressions.
+- Support line concatenation using the '\' backslash line continuation C-operator.
+- Added hexadecimal display in hover: for integer values, shows both decimal and hexadecimal format (e.g., `1024 (0x0400)`) with 4-digit grouping.
+
 ## 0.1.6
 - Added runtime CPU and memory monitoring in the status bar.
 - Added `calcdocs.toggleEnabled` command and `calcdocs.enabled` setting to enable or disable extension behavior on demand.

@@ -30,3 +30,11 @@ export const OP_RX = /[+\-*/%&|^~<>?:()]/;
  * File extensions considered C/C++ sources for analysis.
  */
 export const SRC_EXTS = new Set([".c", ".h", ".cpp", ".hpp", ".cc", ".hh"]);
+
+/** Detect function-like macro definitions */
+export const FUNCTION_DEFINE_RX = /^\s*#\s*define\s+([A-Za-z_]\w*)\s*\(/;
+
+/** Detect object-like macro definitions */
+export const OBJECT_DEFINE_RX = /^\s*#\s*define\s+([A-Za-z_]\w*)\b(?!\s*\()/;
+
+export const DEFINE_NAME_RX = /^\s*#\s*define\s+([A-Za-z_]\w*)/;
