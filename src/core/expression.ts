@@ -1248,8 +1248,15 @@ export function safeEval(expr: string, context: EvaluationContext = {}): number 
   const scopeKeys = Object.keys(scope);
   const scopeValues = scopeKeys.map((key) => scope[key]);
 
-  const fn = new Function(...scopeKeys, `"use strict"; return (${cleaned});`);
-  const value = fn(...scopeValues);
+  // Add eval support for C ==/!= in conditions
+  const conditionExpr = cleaned.replace(/==/g, '===').replace(/!=/g, '!==');
+  const fn = new Function(...scopeKeys, `"use strict"; return (${conditionExpr});`);
+  let value = fn(...scopeValues);
+
+  // convert JS boolean -> C numeric
+  if (typeof value === "boolean") {
+    value = value ? 1 : 0;
+  }
 
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error("non-numeric");
@@ -1257,6 +1264,7 @@ export function safeEval(expr: string, context: EvaluationContext = {}): number 
 
   return value;
 }
+
 
 function normalizeConditionExpression(condition: string | null | undefined): string {
   const trimmed = (condition ?? "").trim();

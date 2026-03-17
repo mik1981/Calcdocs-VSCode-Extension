@@ -1,10 +1,12 @@
 ﻿import * as fsp from "fs/promises";
 
-import { collectDefinesAndConsts } from "./cppParser";
+import { collectDefinesAndConsts, parseCppSymbolDefinition } from "./cppParser";
 import { listFilesRecursive, findFormulaYamlFile } from "./files";
 import {
   createSymbolResolutionStats,
+  buildCompositeExpressionPreview,
   safeEval,
+  isCompositeExpression,
   replaceTokens,
   expandExpression,
   resolveSymbol,
@@ -16,11 +18,20 @@ import {
 import { loadAdjacentCsvTables } from "./csvTables";
 import { loadYaml, buildFormulaEntry, type LoadedYaml } from "./yamlParser";
 import { getConfig, isIgnoredFsPath, refreshIgnoredDirs } from "./config";
-import { CalcDocsState, type YamlParseErrorInfo } from "./state";
+import * as vscode from "vscode";
+import { Uri } from "vscode";
+import { CalcDocsState, type YamlParseErrorInfo, clearDiagnostics } from "./state";
+
+
 import { type FormulaLabel } from "../types/FormulaEntry";
 import { clampLen } from "../utils/text";
 import { TOKEN_RX } from "../utils/regex";
 import { localize } from "../utils/localize";
+import { updateBraceDepth } from "../utils/braceDepth";
+
+import * as path from "path";
+import * as os from "os";
+import * as crypto from "crypto";
 
 /**
  * Risultato dell'analisi del workspace.
@@ -56,10 +67,19 @@ const TABLE_LOOKUP_RX = /\b(?:csv|table|lookup)\s*\(/i;
 const FUNC_CALL_RX = /\b[A-Za-z_][A-Za-z0-9_]*\s*\(/;
 /** Regex per contare operatori matematici nelle espressioni */
 const OPERATOR_COUNT_RX = /[+\-*/%&|^~<>?:]/g;
+/** Regex per rilevare direttive #define in una riga */
+const DEFINE_DIRECTIVE_RX = /^\s*#\s*define\b/;
 // Usato per distinguere errori generici da stack overflow per ricorsione
 const STACK_OVERFLOW_RX = /maximum call stack size exceeded/i;
 /** Regex per estrarre linea e colonna dai messaggi di errore YAML di js-yaml */
 const YAML_LINE_COLUMN_RX = /line\s+(\d+)\s*,\s*column\s+(\d+)/i;
+/** Soglia di mismatch tra define C/C++ e valore formula (1%) */
+const DEFINE_VALUE_MISMATCH_THRESHOLD = 0.01;
+
+/** Estensioni solo per file sorgente C/C++ (no headers) */
+const SOURCES_ONLY_EXTS = new Set([".c", ".cpp", ".cc"]);
+
+
 
 /**
  * Estrae la posizione (linea e colonna) da un messaggio di errore YAML.
@@ -138,6 +158,91 @@ function logStackUsageIfNeeded(
 }
 
 /**
+ * Crea un mega-file temporaneo per un file sorgente C/C++, risolvendo ricorsivamente tutti gli #include
+ * (solo sorgenti, headers ignorati). Ogni mega-file è indipendente.
+ * 
+ * @param sourcePath - File sorgente principale (.c/.cpp/.cc)
+ * @param workspaceRoot - Root del workspace per path relativi
+ * @param output - Output channel per logging
+ * @returns Percorso del file temporaneo mega
+ */
+// async function createMegaSourceFile(
+//   sourcePath: string,
+//   workspaceRoot: string,
+//   output: any
+// ): Promise<string> {
+//   const visited = new Set<string>();
+//   const tempDirName = `calcdocs-mega-${crypto.randomUUID().slice(0,8)}`;
+//   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), tempDirName + '-'));
+  
+//   async function resolveInclude(relIncludePath: string, baseDir: string): Promise<string> {
+//     const absIncludePath = path.resolve(baseDir, relIncludePath);
+//     const key = absIncludePath.toLowerCase();
+    
+//     if (visited.has(key)) {
+//       return '';
+//     }
+//     visited.add(key);
+    
+//     const ext = path.extname(absIncludePath).toLowerCase();
+//     // if (!SOURCES_ONLY_EXTS.has(ext)) {
+//     //   output.detail(`[Mega] Skip header: ${relIncludePath}`);
+//     //   return '';
+//     // }
+    
+//     let content: string;
+//     try {
+//       content = await fsp.readFile(absIncludePath, 'utf8');
+//     } catch (err) {
+//       output.warn(`[Mega] Failed read ${relIncludePath}: ${err}`);
+//       return '';
+//     }
+    
+//     const lines = content.split(/\r?\n/);
+//     let processedContent = `/* === INCL ${path.relative(workspaceRoot, absIncludePath)} === */\n`;
+    
+//     for (const line of lines) {
+//       const includeMatch = line.match(INCLUDE_RX);
+//       if (includeMatch) {
+//         const nested = await resolveInclude(includeMatch[1], path.dirname(absIncludePath));
+//         processedContent += nested || line + '\\n';
+//       } else {
+//         processedContent += line + '\\n';
+//       }
+//     }
+    
+//     output.detail(`trovati: ${processedContent}`);
+//     return processedContent;
+//   }
+  
+//   // Main source processing
+//   const mainDir = path.dirname(sourcePath);
+//   let megaContent = `/* === MEGA from ${path.relative(workspaceRoot, sourcePath)} === */\n`;
+//   const mainContent = await fsp.readFile(sourcePath, 'utf8');
+//   const mainLines = mainContent.split(/\r?\n/);
+  
+//   for (const line of mainLines) {
+//     const includeMatch = line.match(INCLUDE_RX);
+//     if (includeMatch) {
+//       const included = await resolveInclude(includeMatch[1], mainDir);
+//       output.warn(`incluso ${includeMatch[1]} in ${mainDir}`);
+//       megaContent += included || line + '\\n';
+//     } else {
+//       megaContent += line + '\\n';
+//     }
+//   }
+  
+//   const tempFileName = `mega-${path.basename(sourcePath)}`;
+//   const tempPath = path.join(tempDir, tempFileName);
+//   await fsp.writeFile(tempPath, megaContent, 'utf8');
+  
+//   const sizeKB = (Buffer.byteLength(megaContent) / 1024).toFixed(1);
+//   output.detail(`[Mega] Created ${tempPath} (${sizeKB}kB)`);
+  
+//   return tempPath;
+// }
+
+/**
  * Orchestrazione principale dell'analisi del workspace.
  * Scansiona i file, decide la modalità (YAML vs solo C/C++) e popola le mappe di stato condivise.
  * 
@@ -145,6 +250,8 @@ function logStackUsageIfNeeded(
  * @returns Risultato dell'analisi con indicazione di cambiamento del file YAML
  */
 export async function runAnalysis(state: CalcDocsState): Promise<AnalysisResult> {
+  clearFormulaDiagnostics(state);
+
   // Oggetto di diagnostica per-run, condiviso da tutte le chiamate di risoluzione simboli/macro
   const stackStats = createSymbolResolutionStats();
   state.lastYamlParseError = null;
@@ -180,6 +287,10 @@ export async function runAnalysis(state: CalcDocsState): Promise<AnalysisResult>
       loadedYaml,
       stackStats
     );
+    
+    // Report formula discrepancies after analysis
+    await reportFormulaDiscrepancies(state, workspaceScan.files);
+    
     updateStateStackUsage(state, stackStats);
     logStackUsageIfNeeded(state, stackStats);
 
@@ -202,6 +313,7 @@ export async function runAnalysis(state: CalcDocsState): Promise<AnalysisResult>
     };
   }
 }
+
 
 /**
  * Enumera i file del workspace e aggiorna lo stato di presenza del file formulas YAML.
@@ -250,8 +362,21 @@ async function runCppOnlyAnalysis(
     return;
   }
 
-  // Raccogli simboli C/C++ dal codice sorgente
-  const cppSymbols = await collectDefinesAndConsts(files, state.workspaceRoot);
+  // Filter only C/C++ source files (no headers)
+  const sourceFiles = files.filter((f) =>
+    SOURCES_ONLY_EXTS.has(path.extname(f).toLowerCase())
+  );
+
+  if (sourceFiles.length === 0) {
+    state.output.info('No C/C++ source files found for analysis.');
+    return;
+  }
+
+  // Collect symbols from source files with include resolution
+  const cppSymbols = await collectDefinesAndConsts(sourceFiles, state.workspaceRoot, {
+    resolveIncludes: true
+  });
+  // const cppSymbols = await collectDefinesAndConsts(files, state.workspaceRoot);
   applyCppSymbols(state, cppSymbols, {
     resetSymbolValues: true,
     applyConstsBeforeResolve: false,
@@ -263,6 +388,214 @@ async function runCppOnlyAnalysis(
     localize("output.cppAnalysisComplete", state.symbolValues.size)
   );
 }
+
+/**
+ * Reports YAML parse error as VSCode diagnostic in Problems panel.
+ */
+function reportYamlParseDiagnostic(
+  state: CalcDocsState,
+  parseError: YamlParseErrorInfo
+): void {
+  if (!state.diagnostics) return;
+
+  const uri = vscode.Uri.file(parseError.yamlPath);
+  const line = (parseError.line ?? 1) - 1; // 0-based
+  const col = (parseError.column ?? 0) - 1;
+
+  const diag = new vscode.Diagnostic(
+    col > 0 
+      ? new vscode.Range(line, col, line, col + 10) 
+      : new vscode.Range(line, 0, line, 80),
+    `CalcDocs YAML Parse Error: ${parseError.message}`,
+    vscode.DiagnosticSeverity.Error
+  );
+  diag.source = "CalcDocs";
+
+  state.diagnostics!.set(uri, [diag]);
+
+}
+
+/**
+ * Clear all diagnostics for formulas.yaml files.
+ */
+function clearFormulaDiagnostics(state: CalcDocsState): void {
+  clearDiagnostics(state);
+}
+
+function buildSymbolRangeInLine(
+  lineText: string,
+  symbol: string,
+  line: number
+): vscode.Range {
+  const index = lineText.indexOf(symbol);
+  const start = index >= 0 ? index : 0;
+  const end =
+    index >= 0
+      ? index + symbol.length
+      : Math.min(lineText.length, symbol.length);
+  const safeEnd = Math.max(start, end);
+  return new vscode.Range(line, start, line, safeEnd);
+}
+
+async function appendDefineMismatchDiagnostics(
+  state: CalcDocsState,
+  files: string[],
+  diagsByFile: Map<string, vscode.Diagnostic[]>
+): Promise<void> {
+  if (state.formulaIndex.size === 0) {
+    return;
+  }
+
+  const sourceFiles = files.filter((file) =>
+    SOURCES_ONLY_EXTS.has(path.extname(file).toLowerCase())
+  );
+
+  if (sourceFiles.length === 0) {
+    return;
+  }
+
+  for (const filePath of sourceFiles) {
+    let text: string;
+    try {
+      text = await fsp.readFile(filePath, "utf8");
+    } catch {
+      continue;
+    }
+
+    const lines = text.split(/\r?\n/);
+    let braceDepth = 0;
+    const uri = vscode.Uri.file(filePath);
+    const uriStr = uri.toString();
+    const fileDiags = diagsByFile.get(uriStr) ?? [];
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const canParseDeclaration =
+        braceDepth === 0 || DEFINE_DIRECTIVE_RX.test(line);
+      const parsed = canParseDeclaration
+        ? parseCppSymbolDefinition(line)
+        : undefined;
+
+      if (parsed) {
+        const { name, expr, macroParams } = parsed;
+        const ambiguityRoots = state.symbolAmbiguityRoots.get(name) ?? [];
+
+        if (ambiguityRoots.length === 0) {
+          const isFunctionLikeMacro = macroParams != null;
+          if (
+            !isFunctionLikeMacro &&
+            !isCompositeExpression(expr, state.symbolValues, state.allDefines)
+          ) {
+            const formula = state.formulaIndex.get(name);
+            if (formula && typeof formula.valueCalc === "number") {
+              const preview = buildCompositeExpressionPreview(
+                expr,
+                state.symbolValues,
+                state.allDefines,
+                state.functionDefines,
+                {},
+                state.defineConditions
+              );
+              const value = preview.value;
+
+              if (typeof value === "number") {
+                const baseline =
+                  formula.valueCalc === 0 ? 1 : Math.abs(formula.valueCalc);
+                const diff = Math.abs(formula.valueCalc - value) / baseline;
+
+                if (diff > DEFINE_VALUE_MISMATCH_THRESHOLD) {
+                  const pct = diff * 100;
+                  const range = buildSymbolRangeInLine(line, name, i);
+                  fileDiags.push(
+                    new vscode.Diagnostic(
+                      range,
+                      `C/C++ define value ${value} differs from formulas value ${formula.valueCalc} (${pct.toFixed(1)}% diff)`,
+                      vscode.DiagnosticSeverity.Warning
+                    )
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+
+      braceDepth = updateBraceDepth(braceDepth, line);
+    }
+
+    if (fileDiags.length > 0) {
+      diagsByFile.set(uriStr, fileDiags);
+    }
+  }
+}
+
+/**
+ * Check formula entry for label/value discrepancies and report as diagnostics.
+ */
+async function reportFormulaDiscrepancies(
+  state: CalcDocsState,
+  files: string[]
+): Promise<void> {
+  if (!state.diagnostics || state.formulaIndex.size === 0) return;
+
+  const diagsByFile = new Map<string, vscode.Diagnostic[]>();
+  const workspaceRoot = state.workspaceRoot;
+
+  for (const [key, entry] of state.formulaIndex) {
+    if (!entry._filePath) continue;
+    const uriStr = path.join(workspaceRoot, entry._filePath);
+    const uri = vscode.Uri.file(uriStr);
+    const line = (entry._line || 0);
+
+    const fileDiags = diagsByFile.get(uri.toString()) || [];
+
+    // Value discrepancy check
+    if (entry.valueYaml != null && entry.valueCalc != null && Math.abs(entry.valueCalc - entry.valueYaml) > 0.01) {
+      const diff = Math.abs(entry.valueCalc - entry.valueYaml);
+      const baseline = Math.abs(entry.valueYaml || 1);
+      const pct = (diff / baseline) * 100;
+      fileDiags.push(new vscode.Diagnostic(
+        new vscode.Range(line, 0, line, key.length),
+        `Value discrepancy: YAML=${entry.valueYaml.toFixed(2)} vs computed=${entry.valueCalc.toFixed(2)} (${pct.toFixed(1)}% diff)`,
+        vscode.DiagnosticSeverity.Warning
+      ));
+    }
+
+    // Label discrepancy checks (report if explicit label missing inferred one)
+    if (entry.formula) {
+      if (TABLE_LOOKUP_RX.test(entry.formula) && !entry.labels.includes("table_lookup")) {
+        fileDiags.push(new vscode.Diagnostic(
+          new vscode.Range(line, 0, line, key.length),
+          `Formula uses csv/table lookup but missing explicit 'table_lookup' label`,
+          vscode.DiagnosticSeverity.Hint
+        ));
+      }
+      if (isComplexFormulaExpression(entry.formula) && !entry.labels.includes("complex_expression")) {
+        fileDiags.push(new vscode.Diagnostic(
+          new vscode.Range(line, 0, line, key.length),
+          `Complex formula but missing explicit 'complex_expression' label`,
+          vscode.DiagnosticSeverity.Hint
+        ));
+      }
+    }
+
+    if (fileDiags.length > 0) {
+      diagsByFile.set(uri.toString(), fileDiags);
+    }
+  }
+
+  await appendDefineMismatchDiagnostics(state, files, diagsByFile);
+
+  // Clear previous and set new
+  state.diagnostics!.clear();
+  diagsByFile.forEach((diags, uriStr) => {
+    const uri = vscode.Uri.parse(uriStr);
+    state.diagnostics!.set(uri, diags);
+  });
+}
+
+
+
 
 /**
  * Carica il file YAML e riporta gli errori di parsing al canale di output senza lanciare eccezioni.
@@ -294,11 +627,17 @@ async function loadYamlOrReportError(
         ? `:${parseError.line}:${parseError.column}`
         : "";
     state.output.error(localize("output.yamlError", parseError.yamlPath, locationLabel, parseError.message));
+    
+    // Report to Problems panel
+    reportYamlParseDiagnostic(state, parseError);
+    
     // Forza l'apertura del pannello CalcDocs per mostrare subito la diagnostica all'utente
     state.output.show(false);
     return null;
   }
 }
+
+
 
 /**
  * Modalità analisi completa quando esiste il file formulas YAML.
@@ -327,8 +666,16 @@ async function runYamlAnalysis(
   const yamlNodes = getYamlNodeEntries(loadedYaml.parsed);
   seedSymbolValuesFromYaml(state, yamlNodes);
 
-  // Raccogli e applica i simboli C/C++
-  const cppSymbols = await collectDefinesAndConsts(files, state.workspaceRoot);
+  // Filter only C/C++ source files (no headers)
+  const sourceFiles = files.filter((f) =>
+    SOURCES_ONLY_EXTS.has(path.extname(f).toLowerCase())
+  );
+
+  // Collect symbols from source files with include resolution
+  const cppSymbols = await collectDefinesAndConsts(sourceFiles, state.workspaceRoot, {
+    resolveIncludes: true, output: state.output
+  });
+  // const cppSymbols = await collectDefinesAndConsts(files, state.workspaceRoot);
   applyCppSymbols(state, cppSymbols, {
     resetSymbolValues: false,
     applyConstsBeforeResolve: true,
@@ -347,9 +694,7 @@ async function runYamlAnalysis(
     yamlPath,
     state.allDefines,
     state.functionDefines,
-    {
-      csvTables,
-    },
+    { csvTables },
     stackStats
   );
 
@@ -929,4 +1274,3 @@ export async function writeBackYaml(
   state.lastYamlRaw = updatedText;
   state.output.detail(localize("output.yamlUpdated", yamlPath));
 }
-

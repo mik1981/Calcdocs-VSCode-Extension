@@ -4,6 +4,7 @@ import { type FunctionMacroDefinition } from "./expression";
 import { FormulaEntry } from "../types/FormulaEntry";
 import { type ColoredOutput } from "../utils/output";
 
+
 /**
  * Posizione di una definizione di simbolo nel codice sorgente.
  * Utilizzata per la navigazione (Go to Definition).
@@ -96,7 +97,10 @@ export type CalcDocsState = {
   lastAnalysisStackUsage: AnalysisStackUsage;
   /** Ultimo errore di parsing YAML; null se il parsing è riuscito */
   lastYamlParseError: YamlParseErrorInfo | null;
+  /** VSCode diagnostics collection for formulas.yaml errors/discrepancies */
+  diagnostics?: vscode.DiagnosticCollection;
 };
+
 
 /**
  * Crea un'istanza vuota di AnalysisStackUsage con valori di default.
@@ -144,8 +148,10 @@ export function createCalcDocsState(
     functionDefines: new Map<string, FunctionMacroDefinition>(),
     lastAnalysisStackUsage: createDefaultAnalysisStackUsage(),
     lastYamlParseError: null,
+    diagnostics: undefined,
   };
 }
+
 
 /**
  * Pulisce tutti i dati computati dell'analisi.
@@ -164,5 +170,14 @@ export function clearComputedState(state: CalcDocsState): void {
   state.functionDefines.clear();
   state.lastAnalysisStackUsage = createDefaultAnalysisStackUsage();
   state.lastYamlParseError = null;
+  clearDiagnostics(state);
 }
+
+/**
+ * Clears all diagnostics from the collection.
+ */
+export function clearDiagnostics(state: CalcDocsState): void {
+  state.diagnostics?.clear();
+}
+
 

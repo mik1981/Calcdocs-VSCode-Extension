@@ -1,8 +1,33 @@
+#include "test.h"
+
+#ifndef __TEST_H
+  #error "manca include di test.h
+#endif
+
+
+#if DEBUG_MODE == 1
+  #define K_HEX_ENABLE 1
+#else
+  #define K_HEX_ENABLE 0
+#endif
+
+
 // ==== Valori base ====
 #define MUL     (2<<1)
 #define VEL     20
 #define NEG     -5
-#define K       0x10  // 16 dec
+
+#if K_HEX_ENABLE
+  #define K_1       0x10  // 16 dec
+#else
+  #define K_1       6  // 6 dec
+#endif
+
+#if DEBUG_MODE == 0
+  #define K_2       6  // 6 dec
+#else
+  #define K_2       0x10  // 16 dec
+#endif
 
 // ==== Macro object-like e derivate ====
 // #define /*@M1@*/FINAL   (VEL * MUL)
@@ -36,7 +61,8 @@ int main() {
   int z2 = /*@M6@*/FINAL;              // 80
   int z3 = /*@M7@*/LAST;               // 160.8
   int z4 = /*@M8@*/B(4);               // A(5)=10
-  int z5 = /*@M9@*/K;                  // 16
+  int z5_1 = /*@M9@*/K_1;              // 16
+  int z5_2 = /*@M9@*/K_2;              // 16
   int z6 = /*@M10@*/NEGUSE;            // -10
   int z7 = /*@M11@*/CONT_SUM(3,4);     // 7
   int z8 = /*@M12@*/CAST_EX;           // (int)(10*1.53)=(int)(30.6)

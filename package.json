@@ -2,7 +2,7 @@
   "name": "calcdocs-vscode-extension",
   "displayName": "CalcDocs – C/C++ Constants & Formula Evaluator",
   "description": "%extension.description%",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "convergo-dev",
   "repository": {
     "type": "git",
@@ -106,6 +106,27 @@
           "type": "boolean",
           "default": true,
           "description": "%config.enableCppProviders%"
+        },
+        "calcdocs.cppDefines": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "%config.cppDefines%"
+        },
+        "calcdocs.cppUndefines": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "%config.cppUndefines%"
+        },
+        "calcdocs.cppConfiguration": {
+          "type": "string",
+          "default": "",
+          "description": "%config.cppConfiguration%"
         },
         "calcdocs.resourceStatusMode": {
           "type": "string",

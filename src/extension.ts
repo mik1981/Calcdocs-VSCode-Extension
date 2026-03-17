@@ -3,7 +3,8 @@ import * as vscode from "vscode";
 import { registerCommands } from "./commands/commands";
 import { runAnalysis } from "./core/analysis";
 import { getConfig } from "./core/config";
-import { clearComputedState, createCalcDocsState } from "./core/state";
+import { clearComputedState, createCalcDocsState, clearDiagnostics } from "./core/state";
+
 import { createColoredOutput } from "./utils/output";
 import { localize } from "./utils/localize";
 import { ExtensionResourceMonitor, type ExtensionResourceSnapshot } from "./infra/resourceMonitor";
@@ -88,6 +89,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const state = createCalcDocsState(workspaceRoot, coloredOutput);
   state.enabled = config.enabled;
 
+  // Create diagnostics collection for YAML errors/discrepancies
+  state.diagnostics = vscode.languages.createDiagnosticCollection("calcdocs");
+  context.subscriptions.push(state.diagnostics);
+
+
   state.output.setLevel(config.internalDebugMode);
 
   // Crea gli elementi della status bar
@@ -159,6 +165,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Se l'estensione è disabilitata, pulisci lo stato e ferma i provider
     if (!state.enabled) {
       clearComputedState(state);
+      clearDiagnostics(state);
       refreshFormulaStatus();
       refreshRuntimeStatus();
       codeLensProvider.refresh();
@@ -173,6 +180,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     refreshRuntimeStatus();
     codeLensProvider.refresh();
   };
+
 
   // Inizializza il monitor delle risorse di sistema
   resourceMonitor = new ExtensionResourceMonitor(
@@ -237,6 +245,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (previousConfig.enabled !== nextConfig.enabled) {
         coloredOutput!.info(`[config] enabled=${nextConfig.enabled}`);
       }
+
+      // Clear diagnostics if disabled
+      if (!state.enabled) {
+        clearDiagnostics(state);
+      }
+
 
       // Aggiorna la configurazione dello scheduler e del monitor risorse
       scheduler?.applyConfiguration(context, nextConfig);

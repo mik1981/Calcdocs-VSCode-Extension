@@ -51,14 +51,34 @@ export function formatNumbersWithThousandsSeparator(state: CalcDocsState, text: 
   // Get separator from config
   const config = getConfig();
   const separator = getThousandsSeparatorChar(config.thousandsSeparator);
-  // Match numbers: integers, decimals, and numbers with scientific notation
+  // Match numbers: hex (0x...), integers, decimals, and scientific notation
   // Also matches negative numbers and numbers with C suffixes like ul, lu, ull, etc.
   const numberPattern =
-    /[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?\s*(?:ul|lu|ull|llu|u|l|ll|f)?/g;
+    /[-+]?(?:0[xX][0-9a-fA-F]+|(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*(?:ul|lu|ull|llu|u|l|ll|f)?/g;
 
   const ret = text.replace(numberPattern, (match) => {
     // Remove any existing spaces/suffixes from the number for processing
     const cleanNumber = match.trim();
+
+    // Hex literals: group every 4 digits
+    if (/^[-+]?0[xX][0-9a-fA-F]+/.test(cleanNumber)) {
+      const hexMatch = cleanNumber.match(
+        /^([+-]?)(0[xX])([0-9a-fA-F]+)(\s*(?:ul|lu|ull|llu|u|l|ll|f)?)$/
+      );
+      if (!hexMatch) {
+        return match;
+      }
+
+      const [, sign, prefix, digits, suffix] = hexMatch;
+      const groups: string[] = [];
+      for (let i = digits.length; i > 0; i -= 4) {
+        const start = Math.max(0, i - 4);
+        groups.push(digits.slice(start, i));
+      }
+      groups.reverse();
+
+      return `${sign}${prefix}${groups.join(separator)}${suffix}`;
+    }
 
     // Split into integer and decimal parts
     const parts = cleanNumber.split(".");

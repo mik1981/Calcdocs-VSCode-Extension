@@ -2,7 +2,7 @@
   "statusBar.initializing": "Inizializzazione di CalcDocs...",
   "statusBar.formulaCount": "CalcDocs: {0}",
   "statusBar.yamlError": "Errore YAML di CalcDocs",
-  "statusBar.yamlErrorTooltip": "Analisi non riuscita per {0}{1}. Clicca per aprire l'output di CalcDocs.",
+  "statusBar.yamlErrorTooltip": "Errore parsing YAML in {0}{1}. Controlla Problems. Clicca per output.",
   "statusBar.updatesIndexed": "Aggiornate le formule indicizzate",
   "statusBar.runtimeInitializing": "CalcDocs in inizializzazione",
   "statusBar.runtimeOn": "CalcDocs ON",

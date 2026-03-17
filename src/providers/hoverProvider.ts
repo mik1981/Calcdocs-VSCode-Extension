@@ -329,6 +329,24 @@ function normalizeMacroCallForDisplay(call: string): string {
   return s;
 }
 
+/**
+ * Wraps a snippet in a C code block for syntax highlighting in hover.
+ */
+function toCCodeBlock(code: string): string {
+  const trimmed = code.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return `\`\`\`c\n${trimmed}\n\`\`\``;
+}
+
+function indentBlock(block: string, indent = "  "): string {
+  return block
+    .split("\n")
+    .map((line) => `${indent}${line}`)
+    .join("\n");
+}
+
 // =============================================================================
 // SEZIONE 2: RICERCA DEFINIZIONI SIMBOLI
 // =============================================================================
@@ -435,9 +453,14 @@ function formatConditionalDefinitionsSection(
 
   for (const variant of shown) {
     const location = `${variant.file}:${variant.line + 1}`;
-    lines.push(
-      `- when \`${variant.condition}\`: \`${variant.expr}\` (\`${location}\`)`
-    );
+    lines.push(`- when \`${variant.condition}\`:`);    
+    const exprBlock = toCCodeBlock(variant.expr);
+    if (exprBlock) {
+      lines.push(indentBlock(exprBlock));
+    } else {
+      lines.push(`  \`${variant.expr}\``);
+    }
+    lines.push(`  (\`${location}\`)`);
   }
 
   // Aggiungi il conteggio delle varianti non mostrate
@@ -612,7 +635,7 @@ function appendFormulaSection(
 
   state.output.detail(`Formula found for ${word}`);
   
-  // Inizia con il titolo della formula e l'unità opzionale
+  // Inizia con il titolo della formula e l'unita opzionale
   sections.push(
     `### ${formula.key}${formula.unit ? `  \n*Unit:* \`${formula.unit}\`` : ""}`
   );
@@ -625,26 +648,33 @@ function appendFormulaSection(
 
   // Aggiungi la formula originale
   if (formula.formula) {
-    sections.push(`*Formula:* **\`${formula.formula}\`**`);
+    sections.push("*Formula:*");
+    const formulaBlock = toCCodeBlock(formula.formula);
+    if (formulaBlock) {
+      sections.push(formulaBlock);
+    }
   }
 
   // Aggiungi l'espressione espansa e il valore calcolato
   if (formula.expanded) {
-    let valueStr = "";
+    sections.push("*Expanded:*");
+    const expandedFormatted = formatNumbersWithThousandsSeparator(state, formula.expanded);
+    const expandedBlock = toCCodeBlock(expandedFormatted);
+    if (expandedBlock) {
+      sections.push(expandedBlock);
+    }
+
     if (typeof formula.valueCalc === "number") {
       // Formatta il valore decimale
       const decimalStr = formatNumbersWithThousandsSeparator(state, `${formula.valueCalc}`);
-      // Se è un intero positivo, mostra anche la versione esadecimale
+      // Se e un intero positivo, mostra anche la versione esadecimale
       const hexValue = toHexString(formula.valueCalc);
       if (hexValue) {
-        valueStr = ` → \`${decimalStr}\` (${hexValue})`;
+        sections.push(`→ \`${decimalStr}\` (${hexValue})`);
       } else {
-        valueStr = ` → \`${decimalStr}\``;
+        sections.push(`→ \`${decimalStr}\``);
       }
     }
-    sections.push(
-      formatNumbersWithThousandsSeparator(state, `**\`${formula.expanded}\`**${valueStr}`)
-    );
   }
 
   // Aggiungi il link per aprire la formula
@@ -733,11 +763,13 @@ function evaluateMacroForHover(
 
   // Normalizza la chiamata per visualizzazione (rimuovi prima i commenti)
   const displayCall = normalizeMacroCallForDisplay(stripComments(macroCall));
-  const sections: string[] = [`${displayCall}`];
+  const sections: string[] = [];
+  const displayBlock = toCCodeBlock(displayCall);
+  sections.push(displayBlock || displayCall);
 
   if (preview.value !== null) {
     // Caso migliore: mostra direttamente il valore calcolato
-    // Se è un intero positivo, mostra anche la versione esadecimale
+    // Se e un intero positivo, mostra anche la versione esadecimale
     const decimalStr = formatNumbersWithThousandsSeparator(state, `${preview.value}`);
     const hexValue = toHexString(preview.value);
     if (hexValue) {
@@ -753,14 +785,19 @@ function evaluateMacroForHover(
     } else {
       const expanded_number = Number(expanded);
       if (isNaN(expanded_number)) {
-        sections.push(`→ **${expanded}**`);
+        const expandedBlock = toCCodeBlock(expanded);
+        if (expandedBlock) {
+          sections.push(`→\n${expandedBlock}`);
+        } else {
+          sections.push(`→ **${expanded}**`);
+        }
       } else {
         sections.push(`→ **${expanded}** (${toHexString(expanded_number)})`);
       }
     }
   }
 
-  return sections.join(" ");
+  return sections.join("\n\n");
 }
 
 // =============================================================================

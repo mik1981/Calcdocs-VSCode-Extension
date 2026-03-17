@@ -79,7 +79,8 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
 
     for (let i = 0; i < lines.length; i += 1) {
       const line = lines[i];
-      const canParseDeclaration = braceDepth === 0 || DEFINE_DIRECTIVE_RX.test(line);
+      const isDefineLine = DEFINE_DIRECTIVE_RX.test(line);
+      const canParseDeclaration = braceDepth === 0 || isDefineLine;
       const parsed = canParseDeclaration ? parseCppSymbolDefinition(line) : undefined;
       if (!parsed) {
         braceDepth = updateBraceDepth(braceDepth, line);
@@ -165,9 +166,12 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
 
       if (typeof value === "number") {
         const svalue = formatNumbersWithThousandsSeparator(this.state, `${value}`);
+        const cLikePreview = isDefineLine
+          ? `#define ${displayName} ${svalue}`
+          : `${displayName} = ${svalue}`;
         lenses.push(
           new vscode.CodeLens(new vscode.Range(i, 0, i, 0), {
-            title: `CalcDocs: ${displayName} = ${svalue}`,
+            title: `CalcDocs: ${cLikePreview}`,
             command: "",
           })
         );
@@ -177,9 +181,12 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
 
       const previewText = formatNumbersWithThousandsSeparator(this.state, normalizePreviewText(preview.expanded));
       if (previewText && previewText !== expr.trim()) {
+        const cLikePreview = isDefineLine
+          ? `#define ${displayName} ${previewText}`
+          : `${displayName} = ${previewText}`;
         lenses.push(
           new vscode.CodeLens(new vscode.Range(i, 0, i, 0), {
-            title: `CalcDocs: ${displayName} -> ${previewText}`,
+            title: `CalcDocs: ${cLikePreview}`,
             command: "",
           })
         );

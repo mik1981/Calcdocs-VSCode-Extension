@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8
+- Recursive resolution of #if/#elif/#else/#endif constructs (condition-aware symbol extraction).
+- **CodeLens**: brace-aware parsing, formatted c-like previews (`#define NAME 1'024`), refined YAML mismatch warnings.
+- **Hover**: full function-macro call detection/extraction (cursor-aware), RHS macro eval in #define lines, multi-definition lists (conditional/in-file), inherited ambiguity display.
+- **cppParser**: mega-content include resolution, 2nd-pass conditional variant tracking, include-guard awareness.
+- Support for line continuation (`\`) and improved parenthesis handling.
+
 ## 0.1.7
 - Enhanced hover provider with comprehensive documentation and code organization.
 - Added support for RHS (right-hand side) macro evaluation in #define statements: hovering over macro calls within the definition now shows computed results.

@@ -37,7 +37,7 @@ CalcDocs solves all of this by showing you **what the compiler would really comp
   Hover over a symbol to see:  
   - expanded formula  
   - substituted values  
-  - evaluated numeric result  
+  - evaluated numeric result (decimal + hexadecimal)  
   - source location (YAML or C/C++)
 
 - **CodeLens with effective values**  
@@ -54,6 +54,9 @@ CalcDocs solves all of this by showing you **what the compiler would really comp
 
 - **Stack safety monitoring**  
   Circular dependency detection and depth limit protection with degraded mode indicators.
+
+- **Advanced macro parsing**  
+  Function-like calls (cursor-aware), RHS evaluation in #define, brace depth, line continuation (`\`), include resolution (mega-file transitive parsing).
 
 - **Automatic YAML write‑back**  
   When formulas are refreshed, YAML `dati` and `value` fields are updated automatically.
@@ -95,7 +98,7 @@ CalcDocs helps firmware, embedded, and software teams keep formulas, documentati
 
 ## 📦 Install from `.vsix` File (Quick Guide)
 
-If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.7.vsix` to install it without going through the Marketplace.
+If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.8.vsix` to install it without going through the Marketplace.
 
 **Graphical method (recommended):**
 
@@ -109,7 +112,7 @@ If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.7.vsix
 **Terminal method (optional):**
 
 ```bash
-code --install-extension calcdocs-vscode-extension-0.1.7.vsix
+code --install-extension calcdocs-vscode-extension-0.1.8.vsix
 ```
 
 **Verify the installation:**
@@ -167,6 +170,8 @@ calcdocs-vscode-extension/
 ├── l10n/                          # Localization files
 ├── test/                          # Test files and fixtures
 │   ├── test.c                     # Sample C/C++ file with defines and consts
+│   ├── test.h                     # Sample header with conditional defines
+│   ├── support.c                  # Additional test support file
 │   ├── formulas.yaml              # Sample YAML formulas file
 │   └── ntc_10k_table.csv          # Sample CSV table for NTC thermistor lookup
 │
@@ -231,10 +236,13 @@ Available workspace settings:
 - `calcdocs.scanInterval` (number, default `0`)
 - `calcdocs.ignoredDirs` (string array, folders excluded from analysis)
 - `calcdocs.enableCppProviders` (boolean, default `true`, keeps C/C++ tools as primary)
+- `calcdocs.cppDefines` (string array, extra preprocessor defines for #if evaluation, e.g. `DEBUG=1` or `-DDEBUG=1`)
+- `calcdocs.cppUndefines` (string array, preprocessor symbols to remove after project settings, e.g. `-UDEBUG`)
+- `calcdocs.cppConfiguration` (string, name of the config in `.vscode/c_cpp_properties.json`, empty = first config)
 - `calcdocs.enabled` (boolean, default `true`, global ON/OFF switch for CalcDocs)
 - `calcdocs.resourceStatusMode` (`always` or `aboveCpuThreshold`, controls runtime status bar visibility)
 - `calcdocs.resourceCpuThreshold` (number 0-100, default `70`, used when mode is `aboveCpuThreshold`)
-- `calcdocs.thousandsSeparator` (`none`, `space`, `dot`, `comma`, `apostrophe`, `narrowNoBreakSpace`, default `space`)
+`calcdocs.thousandsSeparator` (`none`, `space`, `dot`, `comma`, `apostrophe`, `narrowNoBreakSpace`, default `apostrophe`)
 - `calcdocs.internalDebugMode` (`error`, `warn`, `info`, `debug`, `detail`, `silent`, default `info`)
 
 ---
