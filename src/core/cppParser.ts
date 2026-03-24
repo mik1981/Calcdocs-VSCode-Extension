@@ -78,16 +78,48 @@ async function resolveInclude(
   output: ColoredOutput | undefined,
   visited: Set<string>
 ): Promise<string> {
-  output?.appendLine(`[ResolveInclude] Entry: ${relIncludePath} (ext: ${path.extname(relIncludePath)})`);
-  const absIncludePath = path.resolve(baseDir, relIncludePath);
+  // FIX: Multi-directory search for robust include resolution
+  const candidateDirs = [
+    baseDir,                      // 1. Relative to .c file dir
+    workspaceRoot,                // 2. Workspace root
+    path.join(workspaceRoot, 'include'),
+    path.join(workspaceRoot, 'inc'),
+    path.join(workspaceRoot, 'headers'),
+    path.join(workspaceRoot, 'src')
+  ];
+  
+  let absIncludePath: string | null = null;
+  const keyBase = path.resolve(baseDir, relIncludePath).toLowerCase();
+  
+  for (const dir of candidateDirs) {
+    const candidatePath = path.resolve(dir, relIncludePath);
+    const candidateKey = candidatePath.toLowerCase();
+    try {
+      await fsp.access(candidatePath);
+      absIncludePath = candidatePath;
+      output?.appendLine(`[ResolveInclude] Found: ${relIncludePath} → ${path.relative(workspaceRoot || '.', candidatePath)}`);
+      break;
+    } catch {
+      // Continue to next directory
+    }
+  }
+  
+  if (!absIncludePath) {
+    output?.appendLine(`[ResolveInclude] NOT FOUND: ${relIncludePath} (tried ${candidateDirs.length} dirs)`);
+    return '';
+  }
+  
   const key = absIncludePath.toLowerCase();
+  output?.appendLine(`[ResolveInclude] Entry: ${relIncludePath} → ${key} (ext: ${path.extname(relIncludePath)})`);
 
   if (visited.has(key) || parsedFiles.has(key)) {
+    output?.appendLine(`[ResolveInclude] SKIP cached: ${path.basename(relIncludePath)}`);
     return '';
   }
 
   visited.add(key);
   parsedFiles.add(key);
+
 
   let content: string;
   try {
@@ -131,8 +163,11 @@ async function buildMegaContent(
   output: ColoredOutput | undefined
 ): Promise<string> {
   if (megaCache.has(sourcePath)) {
+    output?.appendLine(`[Mega] CACHE HIT: ${path.basename(sourcePath)} (${(Buffer.byteLength(megaCache.get(sourcePath)!) / 1024).toFixed(1)}kB)`);
     return megaCache.get(sourcePath)!;
   }
+  output?.appendLine(`[Mega] CACHE MISS: ${path.basename(sourcePath)} → building fresh`);
+
 
   const visited = new Set<string>();
   const mainDir = path.dirname(sourcePath);
@@ -566,7 +601,16 @@ export async function collectDefinesAndConsts(
 ): Promise<CollectedCppSymbols> {
 
   const { resolveIncludes = false, output } = options;
+  
+  // FIX: Clear module-level caches for fresh analysis
+  parsedFiles.clear();
+  megaCache.clear();
+  if (output) {
+    output.appendLine(`[CPP] Cache cleared: parsedFiles=${parsedFiles.size}, megaCache=${megaCache.size}`);
+  }
+  
   output?.appendLine(`[CPP] entry files=${files.length}, resolveIncludes=${resolveIncludes ? 'YES' : 'NO'}`);
+
   
   const defines = new Map<string, string>();
   const defineConditions = new Map<string, string>();

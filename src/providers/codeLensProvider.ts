@@ -1,32 +1,27 @@
 import * as vscode from "vscode";
 
-import { parseCppSymbolDefinition } from "../core/cppParser";
+import { collectDocumentSymbolDefinitions } from "../core/documentSymbols";
+import { isCompositeExpression, unwrapParens } from "../core/expression";
 import {
-  buildCompositeExpressionPreview,
-  isCompositeExpression,
-} from "../core/expression";
+  buildCStylePreview,
+  evaluateExpressionPreview,
+  formatExpandedPreview,
+  normalizeExpandedPreviewText,
+  formatPreviewNumber,
+} from "../core/preview";
 import { CalcDocsState } from "../core/state";
-import { updateBraceDepth } from "../utils/braceDepth";
-import { formatNumbersWithThousandsSeparator } from "../utils/nformat";
 
 const CODELENS_PREVIEW_MAX_LEN = 140;
-const DEFINE_DIRECTIVE_RX = /^\s*#\s*define\b/;
+const MISMATCH_THRESHOLD = 0.01;
 
-function normalizePreviewText(expr: string): string {
-  const compact = expr.replace(/\s+/g, " ").trim();
-  const withoutCast = compact.replace(
-    /^\(\s*(?:u?int(?:8|16|32)|u?int(?:8|16|32)_t|float|double)\s*\)\s*\((.+)\)$/i,
-    "$1"
-  );
-
-  if (withoutCast.length <= CODELENS_PREVIEW_MAX_LEN) {
-    return withoutCast;
-  }
-
-  return `${withoutCast.slice(0, CODELENS_PREVIEW_MAX_LEN)}...`;
+function createInfoCodeLens(line: number, title: string): vscode.CodeLens {
+  return new vscode.CodeLens(new vscode.Range(line, 0, line, 0), {
+    title,
+    command: "",
+  });
 }
 
-function buildOpenFormulaCodeLens(
+function createOpenFormulaCodeLens(
   state: CalcDocsState,
   symbol: string,
   line: number
@@ -44,11 +39,25 @@ function buildOpenFormulaCodeLens(
   });
 }
 
+function hasFormulaMismatch(formulaValue: number, evaluatedValue: number): boolean {
+  const baseline = formulaValue === 0 ? 1 : Math.abs(formulaValue);
+  const diff = Math.abs(formulaValue - evaluatedValue) / baseline;
+  return diff > MISMATCH_THRESHOLD;
+}
+
+function buildAmbiguityTitle(symbolName: string, roots: string[]): string {
+  const inheritedRoots = roots.filter((root) => root !== symbolName);
+  return inheritedRoots.length > 0
+    ? `CalcDocs: ${symbolName} depends on conditional symbols (${inheritedRoots.join(", ")})`
+    : `CalcDocs: ${symbolName} has multiple conditional definitions`;
+}
+
+function normalizeExpressionForComparison(expression: string): string {
+  return normalizeExpandedPreviewText(unwrapParens(expression));
+}
+
 /**
  * Adds inline CodeLens hints above C/C++ symbol definitions.
- * Example:
- * - "CalcDocs: K = 42" for resolvable expressions
- * - mismatch warning when YAML computed value diverges from C/C++
  */
 export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
   private readonly emitter = new vscode.EventEmitter<void>();
@@ -57,56 +66,29 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
 
   constructor(private readonly state: CalcDocsState) {}
 
-  /**
-   * Triggers VS Code to recompute lenses.
-   */
   refresh(): void {
     this.emitter.fire();
   }
 
-  /**
-   * Builds CodeLens hints for each parsed symbol definition in the document.
-   */
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     if (!this.state.enabled) {
       return [];
     }
 
     const lenses: vscode.CodeLens[] = [];
-    const lines = document.getText().split(/\r?\n/);
     const renderedAmbiguityLens = new Set<string>();
-    let braceDepth = 0;
+    const definitions = collectDocumentSymbolDefinitions(document.getText());
 
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      const isDefineLine = DEFINE_DIRECTIVE_RX.test(line);
-      const canParseDeclaration = braceDepth === 0 || isDefineLine;
-      const parsed = canParseDeclaration ? parseCppSymbolDefinition(line) : undefined;
-      if (!parsed) {
-        braceDepth = updateBraceDepth(braceDepth, line);
-        continue;
-      }
-
+    for (const definition of definitions) {
+      const { line, isDefineLine, parsed } = definition;
       const { name, expr } = parsed;
       const ambiguityRoots = this.state.symbolAmbiguityRoots.get(name) ?? [];
+
       if (ambiguityRoots.length > 0) {
         if (!renderedAmbiguityLens.has(name)) {
           renderedAmbiguityLens.add(name);
-          const inheritedFrom = ambiguityRoots.filter((root) => root !== name);
-          const title =
-            inheritedFrom.length > 0
-              ? `CalcDocs: ${name} depends on conditional symbols (${inheritedFrom.join(", ")})`
-              : `CalcDocs: ${name} has multiple conditional definitions`;
-
-          lenses.push(
-            new vscode.CodeLens(new vscode.Range(i, 0, i, 0), {
-              title,
-              command: "",
-            })
-          );
+          lenses.push(createInfoCodeLens(line, buildAmbiguityTitle(name, ambiguityRoots)));
         }
-
-        braceDepth = updateBraceDepth(braceDepth, line);
         continue;
       }
 
@@ -115,14 +97,7 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
         : name;
       const isFunctionLikeMacro = parsed.macroParams != null;
 
-      const preview = buildCompositeExpressionPreview(
-        expr,
-        this.state.symbolValues,
-        this.state.allDefines,
-        this.state.functionDefines,
-        {},
-        this.state.defineConditions
-      );
+      const preview = evaluateExpressionPreview(this.state, expr);
       const value = preview.value;
 
       if (
@@ -130,69 +105,52 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
         !isCompositeExpression(expr, this.state.symbolValues, this.state.allDefines)
       ) {
         const formula = this.state.formulaIndex.get(name);
-
-        let mismatch = false;
-
-        if (
-          formula &&
-          typeof formula.valueCalc === "number" &&
-          typeof value === "number"
-        ) {
-          const baseline = formula.valueCalc === 0 ? 1 : Math.abs(formula.valueCalc);
-          const diff = Math.abs(formula.valueCalc - value) / baseline;
-          mismatch = diff > 0.01;
-        }
+        const mismatch =
+          Boolean(formula) &&
+          typeof formula?.valueCalc === "number" &&
+          typeof value === "number" &&
+          hasFormulaMismatch(formula.valueCalc, value);
 
         if (mismatch) {
           lenses.push(
-            new vscode.CodeLens(new vscode.Range(i, 0, i, 0), {
+            new vscode.CodeLens(new vscode.Range(line, 0, line, 0), {
               title: formula
-                ? `❗CalcDocs: ${name} differs from YAML value ${formula.valueCalc} (click to open)❗`
-                : `❗CalcDocs: ${name} needs a check (click to open)❗`,
+                ? `CalcDocs: ${name} differs from YAML value ${formula.valueCalc} (click to open)`
+                : `CalcDocs: ${name} needs a check (click to open)`,
               command: "calcdocs.fixMismatch",
               arguments: [name],
             })
           );
         } else {
-          const openFormulaLens = buildOpenFormulaCodeLens(this.state, name, i);
+          const openFormulaLens = createOpenFormulaCodeLens(this.state, name, line);
           if (openFormulaLens) {
             lenses.push(openFormulaLens);
           }
         }
-        
-        braceDepth = updateBraceDepth(braceDepth, line);
+
         continue;
       }
 
       if (typeof value === "number") {
-        const svalue = formatNumbersWithThousandsSeparator(this.state, `${value}`);
-        const cLikePreview = isDefineLine
-          ? `#define ${displayName} ${svalue}`
-          : `${displayName} = ${svalue}`;
-        lenses.push(
-          new vscode.CodeLens(new vscode.Range(i, 0, i, 0), {
-            title: `CalcDocs: ${cLikePreview}`,
-            command: "",
-          })
+        const cLikePreview = buildCStylePreview(
+          displayName,
+          formatPreviewNumber(this.state, value),
+          isDefineLine
         );
-        braceDepth = updateBraceDepth(braceDepth, line);
+        lenses.push(createInfoCodeLens(line, `CalcDocs: ${cLikePreview}`));
         continue;
       }
 
-      const previewText = formatNumbersWithThousandsSeparator(this.state, normalizePreviewText(preview.expanded));
-      if (previewText && previewText !== expr.trim()) {
-        const cLikePreview = isDefineLine
-          ? `#define ${displayName} ${previewText}`
-          : `${displayName} = ${previewText}`;
-        lenses.push(
-          new vscode.CodeLens(new vscode.Range(i, 0, i, 0), {
-            title: `CalcDocs: ${cLikePreview}`,
-            command: "",
-          })
-        );
-      }
+      const previewText = formatExpandedPreview(this.state, preview.expanded, {
+        maxLength: CODELENS_PREVIEW_MAX_LEN,
+      });
+      const originalComparable = normalizeExpressionForComparison(expr);
+      const expandedComparable = normalizeExpressionForComparison(preview.expanded);
 
-      braceDepth = updateBraceDepth(braceDepth, line);
+      if (previewText && expandedComparable !== originalComparable) {
+        const cLikePreview = buildCStylePreview(displayName, previewText, isDefineLine);
+        lenses.push(createInfoCodeLens(line, `CalcDocs: ${cLikePreview}`));
+      }
     }
 
     return lenses;

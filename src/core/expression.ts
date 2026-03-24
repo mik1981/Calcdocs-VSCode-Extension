@@ -1174,20 +1174,66 @@ export function resolveInlineLookups(
   return output;
 }
 
+function hasWholeExpressionOuterParens(expr: string): boolean {
+  const trimmed = expr.trim();
+  if (!trimmed.startsWith("(") || !trimmed.endsWith(")")) {
+    return false;
+  }
+
+  let depth = 0;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const char = trimmed[i];
+
+    if (char === '"' || char === "'" || char === "`") {
+      const quote = char;
+      i += 1;
+      while (i < trimmed.length) {
+        const current = trimmed[i];
+        if (current === "\\") {
+          i += 2;
+          continue;
+        }
+
+        if (current === quote) {
+          break;
+        }
+
+        i += 1;
+      }
+      continue;
+    }
+
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === ")") {
+      depth -= 1;
+      if (depth < 0) {
+        return false;
+      }
+
+      // If we close the first opening parenthesis before the end,
+      // this is not a single outer wrapper (e.g. "(A) + (B)").
+      if (depth === 0 && i < trimmed.length - 1) {
+        return false;
+      }
+    }
+  }
+
+  return depth === 0;
+}
+
 /**
- * Removes outer parenthesis layers only when they are truly redundant.
- * A parenthesis layer is redundant when:
- * - The inner expression is a pure numeric literal (already resolved), OR
- * - The inner expression can be successfully evaluated numerically
- * 
- * Parentheses are kept when they are meaningful, such as:
- * - C-style type casts: "(unsigned int)(value)"
- * - Expressions with unresolved symbols that can't be evaluated
- * 
+ * Removes redundant outer parenthesis layers only when they wrap the whole expression.
+ *
  * Examples:
- * - "((42))" -> "42" (pure numeric - redundant)
- * - "(unsigned int)(0.5 + ...)" -> "(unsigned int)(0.5 + ...)" (kept - C cast)
- * - "(3.14)" -> "3.14" (evaluable - redundant)
+ * - "((42))" -> "42"
+ * - "((A))" -> "A"
+ * - "(A) + (B)" -> "(A) + (B)" (not a whole-expression wrapper)
+ * - "(unsigned int)(X)" -> "(unsigned int)(X)" (cast preserved)
  */
 export function unwrapParens(expr: string): string {
   let value = expr.trim();
@@ -1200,31 +1246,13 @@ export function unwrapParens(expr: string): string {
     }
   }
 
-  // Only remove outer parentheses if they're truly redundant
-  // (i.e., the inner content is already a numeric literal or evaluates to a number)
-  while (value.startsWith("(") && value.endsWith(")")) {
+  while (hasWholeExpressionOuterParens(value)) {
     const inner = value.slice(1, -1).trim();
     if (!inner) {
       break;
     }
 
-    // If the inner expression is a pure numeric literal, parentheses are redundant
-    if (isPureNumericExpression(inner)) {
-      value = inner;
-      continue;
-    }
-
-    // Try to evaluate the inner expression - if it succeeds, parentheses are redundant
-    try {
-      const evaluated = safeEval(inner, {});
-      // Evaluation succeeded - parentheses are redundant, use the inner expression
-      value = inner;
-      continue;
-    } catch {
-      // Evaluation failed - contains unresolved symbols or invalid syntax
-      // Keep the parentheses (they might be a C-style cast or meaningful grouping)
-      break;
-    }
+    value = inner;
   }
 
   return value;

@@ -51,6 +51,21 @@
                        (b))
 #define NEGUSE      (NEG * 2)
 
+// === Codelens superflui ===
+uint8_t Flags; // Flags applicazione
+#define REQ_USERPARS_SAVE_SET()   (Flags |= 0x01)   /* Richiesta salvataggio parametri utente*/
+
+
+
+// Example constants
+void test_init(void)
+{
+  if (Flags < VBATT_TO_ADC(NOBAT_VOLT_TH)) {}
+}
+
+
+
+
 // ==== Stringizing e token pasting (opzionali) ====
 #define STR(x)  #x
 #define CAT(a,b) a##b

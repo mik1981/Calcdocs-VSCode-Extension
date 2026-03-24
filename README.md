@@ -394,6 +394,8 @@ Contributions are welcome, especially for:
 - tests
 - developer experience
 
+You can also contribute by reporting issues or suggesting new features via email: **caludia@tiscali.it** (subject: **calcdocs**)
+
 ---
 
 ## ❤️ Sponsor
