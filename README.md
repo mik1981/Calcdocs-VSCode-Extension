@@ -98,7 +98,7 @@ CalcDocs helps firmware, embedded, and software teams keep formulas, documentati
 
 ## 📦 Install from `.vsix` File (Quick Guide)
 
-If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.8.vsix` to install it without going through the Marketplace.
+If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.9.vsix` to install it without going through the Marketplace.
 
 **Graphical method (recommended):**
 
@@ -112,7 +112,7 @@ If you wish, you can directly use the file `calcdocs-vscode-extension-0.1.8.vsix
 **Terminal method (optional):**
 
 ```bash
-code --install-extension calcdocs-vscode-extension-0.1.8.vsix
+code --install-extension calcdocs-vscode-extension-0.1.9.vsix
 ```
 
 **Verify the installation:**

@@ -9,6 +9,7 @@
   "config.cppDefines": "Definizioni extra del preprocessore per valutare #if (NAME, NAME=VALUE o -DNAME=VALUE).",
   "config.cppUndefines": "Simboli preprocessore da rimuovere dopo le impostazioni progetto (NAME o -UNAME).",
   "config.cppConfiguration": "Nome configurazione preferita in .vscode/c_cpp_properties.json. Se vuoto, usa la prima configurazione.",
+  "config.cppCacheMaxEntries": "Numero massimo di unità C/C++ preprocessate mantenute nella cache LRU.",
   "config.resourceStatusMode.always": "Mostra sempre lo stato runtime (toggle + CPU/RAM).",
   "config.resourceStatusMode.aboveCpuThreshold": "Mostra lo stato runtime solo quando l'uso CPU supera la soglia.",
   "config.resourceStatusMode": "Controlla quando mostrare lo stato runtime in status bar.",

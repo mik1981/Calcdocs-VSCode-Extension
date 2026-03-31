@@ -56,6 +56,21 @@ function normalizeExpressionForComparison(expression: string): string {
   return normalizeExpandedPreviewText(unwrapParens(expression));
 }
 
+function buildCastOverflowCodeLensTitle(
+  state: CalcDocsState,
+  symbolName: string,
+  error: NonNullable<ReturnType<typeof evaluateExpressionPreview>["error"]>
+): string {
+  const overflow = error.overflow;
+  const rangeText = `[${formatPreviewNumber(state, overflow.min)}..${formatPreviewNumber(state, overflow.max)}]`;
+  const truncated = formatPreviewNumber(state, overflow.truncatedValue);
+  const input = formatPreviewNumber(state, overflow.inputValue);
+  const fromSuffix =
+    overflow.inputValue === overflow.truncatedValue ? "" : ` (from ${input})`;
+
+  return `$(error) CalcDocs: ${symbolName} cast overflow (${overflow.castType}) ${truncated}${fromSuffix} not in ${rangeText}`;
+}
+
 /**
  * Adds inline CodeLens hints above C/C++ symbol definitions.
  */
@@ -99,6 +114,15 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
 
       const preview = evaluateExpressionPreview(this.state, expr);
       const value = preview.value;
+      if (preview.error?.kind === "cast-overflow") {
+        lenses.push(
+          createInfoCodeLens(
+            line,
+            buildCastOverflowCodeLensTitle(this.state, displayName, preview.error)
+          )
+        );
+        continue;
+      }
 
       if (
         !isFunctionLikeMacro &&

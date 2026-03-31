@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.10
+- **Extension**: Active C++ file analysis on editor switch/save, full config change reactivity, improved resourceMonitor lifecycle.
+- **General**: VSCode 1.109+ stability, LRU cache tuning, output channel enhancements.
+
+## 0.1.9 
+- **StatusBar**: YAML parse errors with line/col position, stack degraded indicators, localized tooltips with full stats (depth/cycles/prunes).
+- **Commands**: `openTestFolder` now auto-opens test/ + test.c file.
+- **CodeLensProvider**: Cast overflow diagnostics in lenses, precise mismatch threshold (0.01%), cleaner open-formula links.
+
 ## 0.1.8
 - Recursive resolution of #if/#elif/#else/#endif constructs (condition-aware symbol extraction).
 - **CodeLens**: brace-aware parsing, formatted c-like previews (`#define NAME 1'024`), refined YAML mismatch warnings.

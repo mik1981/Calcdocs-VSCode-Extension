@@ -9,7 +9,7 @@
 typedef unsigned char uint8_t;
 typedef unsigned int uint16_t;
 
-#define DEBUG_MODE        0  //Usato per debug
+#define DEBUG_MODE        1  //Usato per debug
 
 
 #define ADC_RES     1024

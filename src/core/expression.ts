@@ -12,6 +12,20 @@ export type FunctionMacroDefinition = {
   body: string;
 };
 
+export type CastOverflowInfo = {
+  castType: string;
+  inputValue: number;
+  truncatedValue: number;
+  min: number;
+  max: number;
+};
+
+export type CompositeExpressionPreviewError = {
+  kind: "cast-overflow";
+  message: string;
+  overflow: CastOverflowInfo;
+};
+
 type IdentifierMeta = {
   prevChar: string;
   nextChar: string;
@@ -32,6 +46,16 @@ const MAX_CYCLE_SAMPLES = 10;
 const SIMPLIFY_MAX_PASSES = 4;
 const NUMERIC_MUL_DIV_CHAIN_RX =
   /(?<![A-Za-z0-9_.$])[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?(?:\s*[*/]\s*[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)+(?![A-Za-z0-9_])/g;
+const CAST_OVERFLOW_ERROR_NAME = "CalcDocsCastOverflowError";
+
+type IntegerCastRange = {
+  min: number;
+  max: number;
+};
+
+type CastOverflowError = Error & {
+  castOverflow: CastOverflowInfo;
+};
 
 function toFiniteNumber(value: unknown): number {
   const numeric = Number(value);
@@ -42,39 +66,101 @@ function toFiniteNumber(value: unknown): number {
   return numeric;
 }
 
-function toUintN(value: unknown, bits: number): number {
-  const modulo = 2 ** bits;
-  const truncated = Math.trunc(toFiniteNumber(value));
-  return ((truncated % modulo) + modulo) % modulo;
+function createCastOverflowError(info: CastOverflowInfo): CastOverflowError {
+  const error = new Error(
+    `cast overflow: (${info.castType}) cannot represent ${info.truncatedValue} (range ${info.min}..${info.max})`
+  ) as CastOverflowError;
+
+  error.name = CAST_OVERFLOW_ERROR_NAME;
+  error.castOverflow = info;
+  return error;
 }
 
-function toIntN(value: unknown, bits: number): number {
-  const unsigned = toUintN(value, bits);
+function buildIntegerCast(
+  castType: string,
+  range: IntegerCastRange
+): (value: unknown) => number {
+  return (value: unknown): number => {
+    const numeric = toFiniteNumber(value);
+    const truncated = Math.trunc(numeric);
+
+    if (truncated < range.min || truncated > range.max) {
+      throw createCastOverflowError({
+        castType,
+        inputValue: numeric,
+        truncatedValue: truncated,
+        min: range.min,
+        max: range.max,
+      });
+    }
+
+    return truncated;
+  };
+}
+
+function uintCastRange(bits: number): IntegerCastRange {
+  return {
+    min: 0,
+    max: 2 ** bits - 1,
+  };
+}
+
+function intCastRange(bits: number): IntegerCastRange {
   const signBit = 2 ** (bits - 1);
-  const modulo = 2 ** bits;
-  return unsigned >= signBit ? unsigned - modulo : unsigned;
+  return {
+    min: -signBit,
+    max: signBit - 1,
+  };
+}
+
+export function getCastOverflowInfo(error: unknown): CastOverflowInfo | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const maybeOverflowError = error as Partial<CastOverflowError>;
+  if (maybeOverflowError.name !== CAST_OVERFLOW_ERROR_NAME) {
+    return null;
+  }
+
+  const info = maybeOverflowError.castOverflow;
+  if (!info) {
+    return null;
+  }
+
+  return info;
 }
 
 const C_CAST_SCOPE: Record<string, EvalScopeValue> = {
-  UINT8: (value: unknown) => toUintN(value, 8),
-  UINT16: (value: unknown) => toUintN(value, 16),
-  UINT32: (value: unknown) => toUintN(value, 32),
-  INT8: (value: unknown) => toIntN(value, 8),
-  INT16: (value: unknown) => toIntN(value, 16),
-  INT32: (value: unknown) => toIntN(value, 32),
-  uint8_t: (value: unknown) => toUintN(value, 8),
-  uint16_t: (value: unknown) => toUintN(value, 16),
-  uint32_t: (value: unknown) => toUintN(value, 32),
-  int8_t: (value: unknown) => toIntN(value, 8),
-  int16_t: (value: unknown) => toIntN(value, 16),
-  int32_t: (value: unknown) => toIntN(value, 32),
-  int: (value: unknown) => toIntN(value, 32),
-  short: (value: unknown) => toIntN(value, 16),
-  long: (value: unknown) => toIntN(value, 32),
-  unsigned: (value: unknown) => toUintN(value, 32),
+  UINT8: buildIntegerCast("UINT8", uintCastRange(8)),
+  UINT16: buildIntegerCast("UINT16", uintCastRange(16)),
+  UINT32: buildIntegerCast("UINT32", uintCastRange(32)),
+  INT8: buildIntegerCast("INT8", intCastRange(8)),
+  INT16: buildIntegerCast("INT16", intCastRange(16)),
+  INT32: buildIntegerCast("INT32", intCastRange(32)),
+  uint8_t: buildIntegerCast("uint8_t", uintCastRange(8)),
+  uint16_t: buildIntegerCast("uint16_t", uintCastRange(16)),
+  uint32_t: buildIntegerCast("uint32_t", uintCastRange(32)),
+  int8_t: buildIntegerCast("int8_t", intCastRange(8)),
+  int16_t: buildIntegerCast("int16_t", intCastRange(16)),
+  int32_t: buildIntegerCast("int32_t", intCastRange(32)),
+  uint8: buildIntegerCast("uint8", uintCastRange(8)),
+  uint16: buildIntegerCast("uint16", uintCastRange(16)),
+  uint32: buildIntegerCast("uint32", uintCastRange(32)),
+  int8: buildIntegerCast("int8", intCastRange(8)),
+  int16: buildIntegerCast("int16", intCastRange(16)),
+  int32: buildIntegerCast("int32", intCastRange(32)),
+  char: buildIntegerCast("char", intCastRange(8)),
+  int: buildIntegerCast("int", intCastRange(32)),
+  short: buildIntegerCast("short", intCastRange(16)),
+  long: buildIntegerCast("long", intCastRange(32)),
+  unsigned: buildIntegerCast("unsigned", uintCastRange(32)),
+  signed: buildIntegerCast("signed", intCastRange(32)),
   float: (value: unknown) => toFiniteNumber(value),
   double: (value: unknown) => toFiniteNumber(value),
   bool: (value: unknown) => (toFiniteNumber(value) === 0 ? 0 : 1),
+  // Unsigned 32-bit bitwise NOT helper used by expression pre-processing.
+  bnot: (value: unknown) => (~Math.trunc(toFiniteNumber(value))) >>> 0,
 };
 
 const BASE_MATH_SCOPE: Record<string, EvalScopeValue> = {
@@ -1262,8 +1348,114 @@ export function unwrapParens(expr: string): string {
  * Removes common C literal suffixes so JavaScript evaluation can parse them.
  * Example: "10UL + 3f" -> "10 + 3"
  */
-function cleanLiteralSuffixes(expr: string): string {
-  return expr.replace(/(?<=\d)(ul|lu|ull|llu|u|l|ll|f)\b/gi, "");
+type LiteralSanitizationResult = {
+  expression: string;
+  hasUnsignedIntegerLiteral: boolean;
+};
+
+const C_NUMERIC_LITERAL_WITH_SUFFIX_RX =
+  /(?<![A-Za-z0-9_.$])((?:0[xX][0-9A-Fa-f]+|0[bB][01]+|0[oO][0-7]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?))(u(?:ll|l)?|(?:ll|l)u|ll|l|f)\b/gi;
+const SIGNED_RIGHT_SHIFT_RX = />>(?!>)/g;
+const BITWISE_OPERATOR_RX = /(~|&|\||\^|<<|>>>?)/;
+const UNARY_BITWISE_NOT_PAREN_RX = /~\s*\(/g;
+const UNARY_BITWISE_NOT_TOKEN_RX =
+  /~\s*(0[xX][0-9A-Fa-f]+|0[bB][01]+|0[oO][0-7]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[A-Za-z_]\w*)/g;
+
+function literalIsFloatingPoint(literal: string, suffix: string): boolean {
+  if (suffix.toLowerCase().includes("f")) {
+    return true;
+  }
+
+  if (/^0[xX]/.test(literal) || /^0[bB]/.test(literal) || /^0[oO]/.test(literal)) {
+    return false;
+  }
+
+  return literal.includes(".") || /[eE]/.test(literal);
+}
+
+function sanitizeCLiteralsForEval(expr: string): LiteralSanitizationResult {
+  let hasUnsignedIntegerLiteral = false;
+  const expression = expr.replace(
+    C_NUMERIC_LITERAL_WITH_SUFFIX_RX,
+    (_, literal: string, suffix: string) => {
+      const normalizedSuffix = suffix.toLowerCase();
+      if (
+        normalizedSuffix.includes("u") &&
+        !literalIsFloatingPoint(literal, normalizedSuffix)
+      ) {
+        hasUnsignedIntegerLiteral = true;
+      }
+
+      return literal;
+    }
+  );
+
+  return {
+    expression,
+    hasUnsignedIntegerLiteral,
+  };
+}
+
+function preprocessUnsignedBitwiseOps(
+  expr: string,
+  hasUnsignedIntegerLiteral: boolean
+): string {
+  if (!hasUnsignedIntegerLiteral) {
+    return expr;
+  }
+
+  let output = expr.replace(UNARY_BITWISE_NOT_PAREN_RX, "bnot(");
+  output = output.replace(
+    UNARY_BITWISE_NOT_TOKEN_RX,
+    (_: string, operand: string) => `bnot(${operand})`
+  );
+
+  return output.replace(SIGNED_RIGHT_SHIFT_RX, ">>>");
+}
+
+const C_QUALIFIER_PATTERN =
+  "volatile|const|restrict|__restrict__|__restrict|__volatile__|__volatile|__const__|__const|__extension__";
+const C_TYPE_PATTERN =
+  "u?int(?:8|16|32)(?:_t)?|UINT(?:8|16|32)|INT(?:8|16|32)|uint(?:8|16|32)|int(?:8|16|32)|float|double|bool|char|short|long|unsigned|signed|int";
+const C_CAST_WITH_QUALIFIER_RX = new RegExp(
+  `\\(\\s*(?:(?:${C_QUALIFIER_PATTERN})\\s+)+(${C_TYPE_PATTERN})\\s*\\)`,
+  "gi"
+);
+const C_CAST_UNPAREN_RX = new RegExp(
+  `\\(\\s*(${C_TYPE_PATTERN})\\s*\\)` +
+    `\\s*(?!\\()` +
+    `([-+]?(?:0[xX][\\dA-Fa-f]+|0[bB][01]+|0[oO][0-7]+|\\d+(?:\\.\\d*)?(?:[eE][+-]?\\d+)?|\\.[0-9]+(?:[eE][+-]?\\d+)?|[A-Za-z_]\\w*)(?!\\s*\\())`,
+  "gi"
+);
+
+function normalizePrimitiveCastSpelling(expr: string): string {
+  return expr
+    .replace(/\(\s*unsigned\s+int\s*\)/gi, "(unsigned)")
+    .replace(/\(\s*signed\s+int\s*\)/gi, "(signed)")
+    .replace(/\(\s*long\s+int\s*\)/gi, "(long)")
+    .replace(/\(\s*short\s+int\s*\)/gi, "(short)");
+}
+
+function preprocessCCastsForEval(expr: string): string {
+  let output = normalizePrimitiveCastSpelling(expr).replace(
+    C_CAST_WITH_QUALIFIER_RX,
+    (_, typeName: string) => `(${typeName})`
+  );
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = output.replace(
+      C_CAST_UNPAREN_RX,
+      (_, typeName: string, operand: string) => `(${typeName})(${operand})`
+    );
+
+    if (next === output) {
+      break;
+    }
+
+    output = next;
+  }
+
+  return output;
 }
 
 /**
@@ -1271,7 +1463,13 @@ function cleanLiteralSuffixes(expr: string): string {
  * Throws when expression is not reducible to a finite number.
  */
 export function safeEval(expr: string, context: EvaluationContext = {}): number {
-  const cleaned = cleanLiteralSuffixes(expr);
+  const casted = preprocessCCastsForEval(expr);
+  const literalSanitized = sanitizeCLiteralsForEval(casted);
+  const cleaned = preprocessUnsignedBitwiseOps(
+    literalSanitized.expression,
+    literalSanitized.hasUnsignedIntegerLiteral
+  );
+
   const scope = createEvaluationScope(context);
   const scopeKeys = Object.keys(scope);
   const scopeValues = scopeKeys.map((key) => scope[key]);
@@ -1288,6 +1486,14 @@ export function safeEval(expr: string, context: EvaluationContext = {}): number 
 
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error("non-numeric");
+  }
+
+  if (
+    literalSanitized.hasUnsignedIntegerLiteral &&
+    Number.isInteger(value) &&
+    BITWISE_OPERATOR_RX.test(cleaned)
+  ) {
+    return value >>> 0;
   }
 
   return value;
@@ -1772,6 +1978,25 @@ export function isCompositeExpression(
   return tokens.some((token) => symbolValues.has(token) || allDefines.has(token));
 }
 
+function pickCompositePreviewError(
+  errors: unknown[]
+): CompositeExpressionPreviewError | null {
+  for (const error of errors) {
+    const castOverflow = getCastOverflowInfo(error);
+    if (!castOverflow) {
+      continue;
+    }
+
+    return {
+      kind: "cast-overflow",
+      message: `cast overflow: (${castOverflow.castType}) cannot represent ${castOverflow.truncatedValue} (range ${castOverflow.min}..${castOverflow.max})`,
+      overflow: castOverflow,
+    };
+  }
+
+  return null;
+}
+
 /**
  * Resolves function-like macros and known symbols, then tries to simplify numeric fragments.
  */
@@ -1782,7 +2007,11 @@ export function buildCompositeExpressionPreview(
   functionDefines: Map<string, FunctionMacroDefinition> = new Map(),
   context: EvaluationContext = {},
   defineConditions: Map<string, string> = new Map<string, string>()
-): { expanded: string; value: number | null } {
+): {
+  expanded: string;
+  value: number | null;
+  error: CompositeExpressionPreviewError | null;
+} {
   let expanded = stripComments(expr);
   const resolvedMap = new Map<string, number>();
   const stackStats = createSymbolResolutionStats();
@@ -1834,24 +2063,30 @@ export function buildCompositeExpressionPreview(
   expanded = resolveInlineLookups(expanded, context);
   const evaluableExpanded = expanded;
   const simplifiedExpanded = simplifyNumericFragments(evaluableExpanded, context);
+  const errors: unknown[] = [];
 
   try {
     const value = safeEval(evaluableExpanded, context);
     return {
       expanded: unwrapParens(simplifiedExpanded),
       value,
+      error: null,
     };
-  } catch {
+  } catch (error) {
+    errors.push(error);
     try {
       const value = safeEval(simplifiedExpanded, context);
       return {
         expanded: unwrapParens(simplifiedExpanded),
         value,
+        error: null,
       };
-    } catch {
+    } catch (nextError) {
+      errors.push(nextError);
       return {
         expanded: unwrapParens(simplifiedExpanded),
         value: null,
+        error: pickCompositePreviewError(errors),
       };
     }
   }

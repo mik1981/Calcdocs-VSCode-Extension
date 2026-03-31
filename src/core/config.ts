@@ -42,6 +42,8 @@ export type CalcDocsConfig = {
   thousandsSeparator: ThousandsSeparator;
   /** livello di log nell'output console */
   internalDebugMode: LogLevel;
+  /** Numero massimo di file C/C++ preprocessati mantenuti in cache LRU */
+  cppCacheMaxEntries: number;
 };
 
 /**
@@ -82,6 +84,10 @@ export function getConfig(): CalcDocsConfig {
   // Leggi il livello di log
   const internalDebugModeValue = cfg.get<string>("internalDebugMode", "");
   const internalDebugMode: LogLevel = internalDebugModeValue as LogLevel;
+  const rawCppCacheMaxEntries = Number(cfg.get<number>("cppCacheMaxEntries", 24));
+  const cppCacheMaxEntries = Number.isFinite(rawCppCacheMaxEntries)
+    ? Math.max(1, Math.floor(rawCppCacheMaxEntries))
+    : 24;
     // ["none", "space", "dot", "comma", "apostrophe", "narrowNoBreakSpace"].includes(internalDebugModeValue)
     //   ? internalDebugModeValue as LogLevel
     //   : "";
@@ -95,7 +101,8 @@ export function getConfig(): CalcDocsConfig {
     resourceStatusMode,
     resourceCpuThreshold,
     thousandsSeparator,
-    internalDebugMode    
+    internalDebugMode,
+    cppCacheMaxEntries,
   };
 }
 
@@ -319,4 +326,3 @@ export function getThousandsSeparatorChar(separator: ThousandsSeparator): string
       return " ";
   }
 }
-

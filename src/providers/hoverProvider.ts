@@ -7,8 +7,10 @@ import {
 import {
   evaluateExpressionPreview,
   formatExpandedPreview,
+  formatPreviewNumber,
   formatPreviewNumberWithHex,
 } from "../core/preview";
+import type { CastOverflowInfo } from "../core/expression";
 import { CalcDocsState } from "../core/state";
 import { pickWord } from "../utils/editor";
 import { formatNumbersWithThousandsSeparator } from "../utils/nformat";
@@ -407,6 +409,58 @@ function appendKnownValueSection(
   sections.push(`${symbol} = **${formatPreviewNumberWithHex(state, knownValue)}**`);
 }
 
+function formatCastOverflowSummary(
+  state: CalcDocsState,
+  overflow: CastOverflowInfo
+): string {
+  const rangeText = `[${formatPreviewNumber(state, overflow.min)}..${formatPreviewNumber(state, overflow.max)}]`;
+  const truncated = formatPreviewNumber(state, overflow.truncatedValue);
+  const input = formatPreviewNumber(state, overflow.inputValue);
+  const fromSuffix =
+    overflow.inputValue === overflow.truncatedValue ? "" : ` (from ${input})`;
+
+  return `(${overflow.castType}) ${truncated}${fromSuffix} outside ${rangeText}`;
+}
+
+function formatCastOverflowErrorLine(
+  state: CalcDocsState,
+  overflow: CastOverflowInfo
+): string {
+  return `<span style="color:#d32f2f"><strong>Cast overflow:</strong> ${formatCastOverflowSummary(state, overflow)}</span>`;
+}
+
+function formatInDocumentOverflowSection(
+  state: CalcDocsState,
+  document: vscode.TextDocument,
+  inDocumentDefinitions: InDocumentSymbolDefinition[]
+): string | null {
+  const lines: string[] = [];
+  const relativePath = vscode.workspace.asRelativePath(document.uri.fsPath);
+
+  for (const definition of inDocumentDefinitions) {
+    const preview = evaluateExpressionPreview(state, definition.expr);
+    if (preview.error?.kind !== "cast-overflow") {
+      continue;
+    }
+
+    lines.push(
+      `- \`${relativePath}:${definition.line + 1}\`: ${formatCastOverflowSummary(
+        state,
+        preview.error.overflow
+      )}`
+    );
+  }
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return [
+    "<span style=\"color:#d32f2f\"><strong>Cast overflow detected:</strong></span>",
+    ...lines,
+  ].join("\n");
+}
+
 function evaluateMacroForHover(macroCall: string, state: CalcDocsState): string {
   const preview = evaluateExpressionPreview(state, macroCall);
   state.output.detail(`Preview.expanded: ${preview.expanded}`);
@@ -419,6 +473,11 @@ function evaluateMacroForHover(macroCall: string, state: CalcDocsState): string 
 
   if (typeof preview.value === "number") {
     sections.push(`-> **${formatPreviewNumberWithHex(state, preview.value)}**`);
+    return sections.join("\n\n");
+  }
+
+  if (preview.error?.kind === "cast-overflow") {
+    sections.push(formatCastOverflowErrorLine(state, preview.error.overflow));
     return sections.join("\n\n");
   }
 
@@ -477,6 +536,15 @@ function buildSymbolHoverSections(
   );
   if (inDocumentSection) {
     sections.push(inDocumentSection);
+  }
+
+  const inDocumentOverflowSection = formatInDocumentOverflowSection(
+    state,
+    document,
+    inDocumentDefinitions
+  );
+  if (inDocumentOverflowSection) {
+    sections.push(inDocumentOverflowSection);
   }
 
   const inheritedAmbiguity = formatInheritedAmbiguitySection(word, state);
@@ -538,6 +606,7 @@ export function registerCppHoverProvider(
           const markdown = new vscode.MarkdownString(
             evaluateMacroForHover(macroToEvaluate, state)
           );
+          markdown.supportHtml = true;
           markdown.isTrusted = true;
           return new vscode.Hover(markdown, range);
         }
@@ -562,6 +631,7 @@ export function registerCppHoverProvider(
         }
 
         const markdown = new vscode.MarkdownString(sections.join("\n\n"));
+        markdown.supportHtml = true;
         markdown.isTrusted = true;
         return new vscode.Hover(markdown, range);
       },

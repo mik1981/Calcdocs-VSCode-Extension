@@ -13,6 +13,8 @@ export type DocumentSymbolDefinition = {
 /**
  * Collects top-level C/C++ declarations parsed by parseCppSymbolDefinition.
  * #define directives are always parsed regardless of brace depth.
+ * Multi-line #define directives using trailing "\" are merged into one
+ * logical line before parsing.
  */
 export function collectDocumentSymbolDefinitions(
   documentText: string
@@ -20,9 +22,17 @@ export function collectDocumentSymbolDefinitions(
   const lines = documentText.split(/\r?\n/);
   const definitions: DocumentSymbolDefinition[] = [];
   let braceDepth = 0;
+  let lineIndex = 0;
 
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const lineText = lines[lineIndex];
+  while (lineIndex < lines.length) {
+    const startLine = lineIndex;
+    let lineText = lines[lineIndex];
+
+    while (lineText.trimEnd().endsWith("\\") && lineIndex + 1 < lines.length) {
+      lineIndex += 1;
+      lineText = `${lineText.trimEnd().slice(0, -1)} ${lines[lineIndex].trim()}`;
+    }
+
     const isDefineLine = DEFINE_DIRECTIVE_RX.test(lineText);
     const canParseDeclaration = braceDepth === 0 || isDefineLine;
     const parsed = canParseDeclaration
@@ -31,7 +41,7 @@ export function collectDocumentSymbolDefinitions(
 
     if (parsed) {
       definitions.push({
-        line: lineIndex,
+        line: startLine,
         lineText,
         isDefineLine,
         parsed,
@@ -39,6 +49,7 @@ export function collectDocumentSymbolDefinitions(
     }
 
     braceDepth = updateBraceDepth(braceDepth, lineText);
+    lineIndex += 1;
   }
 
   return definitions;

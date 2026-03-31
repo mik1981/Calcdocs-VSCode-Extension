@@ -1,4 +1,7 @@
-import { buildCompositeExpressionPreview } from "./expression";
+import {
+  buildCompositeExpressionPreview,
+  type CompositeExpressionPreviewError,
+} from "./expression";
 import { CalcDocsState } from "./state";
 import {
   formatNumbersWithThousandsSeparator,
@@ -8,6 +11,7 @@ import {
 export type ExpressionPreview = {
   expanded: string;
   value: number | null;
+  error: CompositeExpressionPreviewError | null;
 };
 
 type FormatExpandedPreviewOptions = {

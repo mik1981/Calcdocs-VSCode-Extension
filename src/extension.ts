@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 
 import { registerCommands } from "./commands/commands";
-import { runAnalysis } from "./core/analysis";
+import { runAnalysis, runActiveCppFileAnalysis } from "./core/analysis";
 import { getConfig } from "./core/config";
 import { clearComputedState, createCalcDocsState, clearDiagnostics } from "./core/state";
 
@@ -22,7 +22,21 @@ import {
   updateStatusBar,
   updateStatusBarVisibility,
 } from "./ui/statusBar";
-import { test_lang  } from "./utils/localize";
+
+function isCppFileEditor(
+  editor: vscode.TextEditor | undefined
+): editor is vscode.TextEditor {
+  if (!editor) {
+    return false;
+  }
+
+  const languageId = editor.document.languageId;
+  if (languageId !== "c" && languageId !== "cpp") {
+    return false;
+  }
+
+  return editor.document.uri.scheme === "file";
+}
 
 /**
  * Canale di output dell'estensione per messaggi di log e diagnostica.
@@ -175,7 +189,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Esegui l'analisi del workspace
     await runAnalysis(state);
 
+    const activeEditor = vscode.window.activeTextEditor;
+    if (isCppFileEditor(activeEditor)) {
+      await runActiveCppFileAnalysis(state, activeEditor.document.uri.fsPath);
+    }
+
     // Aggiorna tutti i componenti UI
+    refreshFormulaStatus();
+    refreshRuntimeStatus();
+    codeLensProvider.refresh();
+  };
+
+  const runActiveCppAnalysisAndRefreshUi = async (
+    editor: vscode.TextEditor | undefined
+  ): Promise<void> => {
+    if (!state.enabled || !isCppFileEditor(editor)) {
+      return;
+    }
+
+    await runActiveCppFileAnalysis(state, editor.document.uri.fsPath);
     refreshFormulaStatus();
     refreshRuntimeStatus();
     codeLensProvider.refresh();
@@ -212,6 +244,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       codeLensProvider.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      void runActiveCppAnalysisAndRefreshUi(editor);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      const activeEditor = vscode.window.activeTextEditor;
+      if (!activeEditor) {
+        return;
+      }
+
+      if (activeEditor.document.uri.toString() !== document.uri.toString()) {
+        return;
+      }
+
+      void runActiveCppAnalysisAndRefreshUi(activeEditor);
     })
   );
 
@@ -265,7 +318,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         event.affectsConfiguration("calcdocs.enabled") ||
         event.affectsConfiguration("calcdocs.scanInterval") ||
         event.affectsConfiguration("calcdocs.ignoredDirs") ||
-        event.affectsConfiguration("calcdocs.enableCppProviders");
+        event.affectsConfiguration("calcdocs.enableCppProviders") ||
+        event.affectsConfiguration("calcdocs.cppCacheMaxEntries");
 
       if (analysisRelevantChange) {
         void runAnalysisAndRefreshUi();

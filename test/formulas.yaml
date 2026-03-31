@@ -1,5 +1,5 @@
 VEL:
-  dati: 5 * 4
+  dati:
   formula: 5 * MUL
   steps: 
     - prende 5

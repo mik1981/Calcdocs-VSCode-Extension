@@ -41,7 +41,7 @@
 #define PT100_OHM_MIN   ( 58.93 )//ohm
 #define PT100_OHM_MAX   ( 217.16 )//ohm
 #define PT100_TOT_AMPL  ( 0.000974 * 32.44192581 / 5.0 )
-#define PT100_NUM16(R)  (unsigned int)(0.5 + ( R - PT100_OHM_MIN ) * PT100_TOT_AMPL * 65536.0 )
+#define PT100_NUM16(R)  (signed int)(0.5 + ( R - PT100_OHM_MIN ) * PT100_TOT_AMPL * 65536.0 )
 #define PT100_100OHM    PT100_NUM16(100)        // hover su RHS function-like
 
 // ==== Commenti, cast, line continuation, operatori ====
@@ -54,6 +54,10 @@
 // === Codelens superflui ===
 uint8_t Flags; // Flags applicazione
 #define REQ_USERPARS_SAVE_SET()   (Flags |= 0x01)   /* Richiesta salvataggio parametri utente*/
+#define OPTBYTE_WRP     (~(0U))    /* protect none page */
+#define REQ_USERPARS_MULTI      (((uint32_t)OPTBYTE_WRP & 0x01) |\
+                                   ((uint32_t)0xAF & 0x02)\
+                                )
 
 
 

@@ -23,7 +23,7 @@ import { Uri } from "vscode";
 import { CalcDocsState, type YamlParseErrorInfo, clearDiagnostics } from "./state";
 
 
-import { type FormulaLabel } from "../types/FormulaEntry";
+import { type FormulaEntry, type FormulaLabel } from "../types/FormulaEntry";
 import { clampLen } from "../utils/text";
 import { TOKEN_RX } from "../utils/regex";
 import { localize } from "../utils/localize";
@@ -314,6 +314,58 @@ export async function runAnalysis(state: CalcDocsState): Promise<AnalysisResult>
   }
 }
 
+/**
+ * Analizza solo il file C/C++ attivo (più include risolti) senza rieseguire la scansione YAML globale.
+ * Mantiene formulaIndex già presente e aggiorna le mappe simboliche usate da hover/definition/codelens.
+ * 
+ * @param state - Stato corrente dell'estensione
+ * @param sourcePath - Percorso assoluto del file C/C++ attivo
+ */
+export async function runActiveCppFileAnalysis(
+  state: CalcDocsState,
+  sourcePath: string
+): Promise<void> {
+  const normalizedSourcePath = path.resolve(sourcePath);
+  if (!SOURCES_ONLY_EXTS.has(path.extname(normalizedSourcePath).toLowerCase())) {
+    return;
+  }
+
+  const stackStats = createSymbolResolutionStats();
+
+  try {
+    const config = getConfig();
+    const cppSymbols = await collectDefinesAndConsts(
+      [normalizedSourcePath],
+      state.workspaceRoot,
+      {
+        resolveIncludes: true,
+        output: state.output,
+        maxMegaCacheEntries: config.cppCacheMaxEntries,
+      }
+    );
+
+    applyCppSymbols(state, cppSymbols, {
+      resetSymbolValues: true,
+      applyConstsBeforeResolve: false,
+      requireFiniteResolvedValues: true,
+      symbolResolutionStats: stackStats,
+    });
+
+    updateStateStackUsage(state, stackStats);
+    logStackUsageIfNeeded(state, stackStats);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const isStackOverflow = STACK_OVERFLOW_RX.test(message);
+    state.output.warn(
+      isStackOverflow
+        ? localize("output.stackOverflow", message)
+        : localize("output.analysisError", message)
+    );
+    updateStateStackUsage(state, stackStats, isStackOverflow);
+    logStackUsageIfNeeded(state, stackStats);
+  }
+}
+
 
 /**
  * Enumera i file del workspace e aggiorna lo stato di presenza del file formulas YAML.
@@ -373,8 +425,10 @@ async function runCppOnlyAnalysis(
   }
 
   // Collect symbols from source files with include resolution
+  const config = getConfig();
   const cppSymbols = await collectDefinesAndConsts(sourceFiles, state.workspaceRoot, {
-    resolveIncludes: true
+    resolveIncludes: true,
+    maxMegaCacheEntries: config.cppCacheMaxEntries,
   });
   // const cppSymbols = await collectDefinesAndConsts(files, state.workspaceRoot);
   applyCppSymbols(state, cppSymbols, {
@@ -435,6 +489,66 @@ function buildSymbolRangeInLine(
       : Math.min(lineText.length, symbol.length);
   const safeEnd = Math.max(start, end);
   return new vscode.Range(line, start, line, safeEnd);
+}
+
+function hasMissingYamlValue(entry: FormulaEntry): boolean {
+  return !(typeof entry.valueYaml === "number" && Number.isFinite(entry.valueYaml));
+}
+
+function getUniqueSymbolLocations(
+  state: CalcDocsState,
+  symbol: string
+): Array<{ file: string; line: number }> {
+  const variants = state.symbolConditionalDefs.get(symbol) ?? [];
+  const unique = new Map<string, { file: string; line: number }>();
+
+  for (const variant of variants) {
+    const key = `${variant.expr}@@${variant.condition}`;
+    unique.set(key, {
+      file: variant.file,
+      line: variant.line,
+    });
+  }
+
+  return Array.from(unique.values());
+}
+
+function appendMissingYamlValueDuplicateDiagnostics(
+  state: CalcDocsState,
+  diagsByFile: Map<string, vscode.Diagnostic[]>
+): void {
+  const workspaceRoot = state.workspaceRoot;
+
+  for (const [key, entry] of state.formulaIndex) {
+    if (!entry._filePath || !hasMissingYamlValue(entry)) {
+      continue;
+    }
+
+    const locations = getUniqueSymbolLocations(state, key);
+    if (locations.length <= 1) {
+      continue;
+    }
+
+    const uri = vscode.Uri.file(path.join(workspaceRoot, entry._filePath));
+    const uriStr = uri.toString();
+    const line = Math.max(0, entry._line ?? 0);
+    const range = new vscode.Range(line, 0, line, Math.max(1, key.length));
+    const previewLocations = locations
+      .slice(0, 4)
+      .map((location) => `${location.file}:${location.line}`)
+      .join(", ");
+    const extraCount = locations.length - 4;
+    const suffix = extraCount > 0 ? ` (+${extraCount} more)` : "";
+
+    const message =
+      `Duplicate C/C++ references found for missing YAML value '${key}': ` +
+      `${previewLocations}${suffix}.`;
+    const fileDiags = diagsByFile.get(uriStr) ?? [];
+    fileDiags.push(
+      new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error)
+    );
+    diagsByFile.set(uriStr, fileDiags);
+  }
 }
 
 async function appendDefineMismatchDiagnostics(
@@ -584,6 +698,7 @@ async function reportFormulaDiscrepancies(
     }
   }
 
+  appendMissingYamlValueDuplicateDiagnostics(state, diagsByFile);
   await appendDefineMismatchDiagnostics(state, files, diagsByFile);
 
   // Clear previous and set new
@@ -672,8 +787,11 @@ async function runYamlAnalysis(
   );
 
   // Collect symbols from source files with include resolution
+  const config = getConfig();
   const cppSymbols = await collectDefinesAndConsts(sourceFiles, state.workspaceRoot, {
-    resolveIncludes: true, output: state.output
+    resolveIncludes: true,
+    output: state.output,
+    maxMegaCacheEntries: config.cppCacheMaxEntries,
   });
   // const cppSymbols = await collectDefinesAndConsts(files, state.workspaceRoot);
   applyCppSymbols(state, cppSymbols, {
@@ -697,6 +815,7 @@ async function runYamlAnalysis(
     { csvTables },
     stackStats
   );
+  fillMissingYamlValuesFromCppSymbols(state);
 
   state.output.info(
     localize("output.analysisComplete", state.formulaIndex.size)
@@ -1074,6 +1193,28 @@ function rebuildFormulaIndex(
     }
 
     state.formulaIndex.set(key, entry);
+  }
+}
+
+function fillMissingYamlValuesFromCppSymbols(state: CalcDocsState): void {
+  for (const entry of state.formulaIndex.values()) {
+    if (!hasMissingYamlValue(entry)) {
+      continue;
+    }
+
+    if (typeof entry.valueCalc === "number" && Number.isFinite(entry.valueCalc)) {
+      continue;
+    }
+
+    const symbolLocations = getUniqueSymbolLocations(state, entry.key);
+    if (symbolLocations.length > 1) {
+      continue;
+    }
+
+    const symbolValue = state.symbolValues.get(entry.key);
+    if (typeof symbolValue === "number" && Number.isFinite(symbolValue)) {
+      entry.valueCalc = symbolValue;
+    }
   }
 }
 

@@ -86,9 +86,8 @@ export class AnalysisScheduler implements vscode.Disposable {
       return;
     }
 
-    const extensionPattern = enableCppProviders
-      ? "**/*.{yaml,yml,c,cpp,h,hpp,cc,hh}"
-      : "**/*.{yaml,yml}";
+    // YAML refresh stays workspace-wide; C/C++ checks are handled on active editor.
+    const extensionPattern = "**/*.{yaml,yml}";
 
     for (const folder of folders) {
       const pattern = new vscode.RelativePattern(folder, extensionPattern);

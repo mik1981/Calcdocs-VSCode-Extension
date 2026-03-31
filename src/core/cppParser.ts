@@ -1,7 +1,5 @@
 ﻿import * as fsp from "fs/promises";
 import * as path from "path";
-import * as os from "os";
-import * as crypto from "crypto";
 
 import { updateBraceDepth } from "../utils/braceDepth";
 import { DEFINE_RX, SRC_EXTS, TOKEN_RX } from "../utils/regex";
@@ -11,7 +9,6 @@ import {
   SymbolConditionalDefinition,
   SymbolDefinitionLocation,
 } from "./state";
-import { OutputChannel } from "vscode";
 import { type ColoredOutput } from "../utils/output";
 
 export type CppSymbolDefinition = {
@@ -33,6 +30,7 @@ export type CollectOptions = {
   resolveIncludes?: boolean;
   output?: ColoredOutput;
   workspaceRoot?: string;
+  maxMegaCacheEntries?: number;
 };
 
 type ParsedDefineDirective = {
@@ -64,8 +62,88 @@ const CONTROL_FLOW_KEYWORD_RX =
 /** Regex per catturare #include "file" o <file> */
 const INCLUDE_RX = /^\s*#include\s+["<]([^">]+)[">]/i;
 
-const parsedFiles = new Set<string>();
-const megaCache = new Map<string,string>();
+type FileStamp = {
+  mtimeMs: number;
+  size: number;
+};
+
+type MegaCacheEntry = {
+  content: string;
+  dependencies: Map<string, FileStamp>;
+  byteSize: number;
+  lastAccessed: number;
+};
+
+const DEFAULT_MEGA_CACHE_MAX_ENTRIES = 24;
+const MIN_MEGA_CACHE_ENTRIES = 1;
+const megaCache = new Map<string, MegaCacheEntry>();
+
+function normalizeCacheKey(filePath: string): string {
+  return path.resolve(filePath).toLowerCase();
+}
+
+async function getFileStamp(filePath: string): Promise<FileStamp | null> {
+  try {
+    const stat = await fsp.stat(filePath);
+    return {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function isMegaCacheEntryValid(entry: MegaCacheEntry): Promise<boolean> {
+  for (const [dependencyPath, previousStamp] of entry.dependencies) {
+    const currentStamp = await getFileStamp(dependencyPath);
+    if (!currentStamp) {
+      return false;
+    }
+
+    if (
+      currentStamp.mtimeMs !== previousStamp.mtimeMs ||
+      currentStamp.size !== previousStamp.size
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function touchMegaCacheEntry(cacheKey: string, entry: MegaCacheEntry): void {
+  entry.lastAccessed = Date.now();
+  megaCache.delete(cacheKey);
+  megaCache.set(cacheKey, entry);
+}
+
+function clampMegaCacheEntries(maxMegaCacheEntries: number | undefined): number {
+  if (!Number.isFinite(maxMegaCacheEntries)) {
+    return DEFAULT_MEGA_CACHE_MAX_ENTRIES;
+  }
+
+  return Math.max(MIN_MEGA_CACHE_ENTRIES, Math.floor(maxMegaCacheEntries!));
+}
+
+function evictOldMegaEntries(maxEntries: number, output?: ColoredOutput): void {
+  while (megaCache.size > maxEntries) {
+    const oldest = megaCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+
+    const oldestKey = oldest.value;
+    const oldestEntry = megaCache.get(oldestKey);
+    megaCache.delete(oldestKey);
+
+    if (oldestEntry) {
+      output?.detail(
+        `[Mega] LRU evict ${path.basename(oldestKey)} (${(oldestEntry.byteSize / 1024).toFixed(1)}kB)`
+      );
+    }
+  }
+}
 
 
 /*
@@ -76,7 +154,8 @@ async function resolveInclude(
   baseDir: string, 
   workspaceRoot: string,
   output: ColoredOutput | undefined,
-  visited: Set<string>
+  visited: Set<string>,
+  dependencyTracker: Set<string>
 ): Promise<string> {
   // FIX: Multi-directory search for robust include resolution
   const candidateDirs = [
@@ -89,11 +168,9 @@ async function resolveInclude(
   ];
   
   let absIncludePath: string | null = null;
-  const keyBase = path.resolve(baseDir, relIncludePath).toLowerCase();
   
   for (const dir of candidateDirs) {
     const candidatePath = path.resolve(dir, relIncludePath);
-    const candidateKey = candidatePath.toLowerCase();
     try {
       await fsp.access(candidatePath);
       absIncludePath = candidatePath;
@@ -109,16 +186,16 @@ async function resolveInclude(
     return '';
   }
   
-  const key = absIncludePath.toLowerCase();
+  const key = normalizeCacheKey(absIncludePath);
   output?.appendLine(`[ResolveInclude] Entry: ${relIncludePath} → ${key} (ext: ${path.extname(relIncludePath)})`);
 
-  if (visited.has(key) || parsedFiles.has(key)) {
-    output?.appendLine(`[ResolveInclude] SKIP cached: ${path.basename(relIncludePath)}`);
+  if (visited.has(key)) {
+    output?.appendLine(`[ResolveInclude] SKIP recursive include: ${path.basename(relIncludePath)}`);
     return '';
   }
 
   visited.add(key);
-  parsedFiles.add(key);
+  dependencyTracker.add(absIncludePath);
 
 
   let content: string;
@@ -143,7 +220,8 @@ async function resolveInclude(
         path.dirname(absIncludePath), 
         workspaceRoot,
         output,
-        visited
+        visited,
+        dependencyTracker
       );
       processedContent += nested || line + '\n';
     } else {
@@ -160,16 +238,29 @@ async function resolveInclude(
 async function buildMegaContent(
   sourcePath: string,
   workspaceRoot: string,
-  output: ColoredOutput | undefined
+  output: ColoredOutput | undefined,
+  maxMegaCacheEntries: number
 ): Promise<string> {
-  if (megaCache.has(sourcePath)) {
-    output?.appendLine(`[Mega] CACHE HIT: ${path.basename(sourcePath)} (${(Buffer.byteLength(megaCache.get(sourcePath)!) / 1024).toFixed(1)}kB)`);
-    return megaCache.get(sourcePath)!;
+  const cacheKey = normalizeCacheKey(sourcePath);
+  const cached = megaCache.get(cacheKey);
+  if (cached) {
+    const isValid = await isMegaCacheEntryValid(cached);
+    if (isValid) {
+      touchMegaCacheEntry(cacheKey, cached);
+      output?.appendLine(
+        `[Mega] CACHE HIT: ${path.basename(sourcePath)} (${(cached.byteSize / 1024).toFixed(1)}kB)`
+      );
+      return cached.content;
+    }
+
+    megaCache.delete(cacheKey);
+    output?.appendLine(`[Mega] CACHE STALE: ${path.basename(sourcePath)} → rebuilding`);
   }
   output?.appendLine(`[Mega] CACHE MISS: ${path.basename(sourcePath)} → building fresh`);
 
 
   const visited = new Set<string>();
+  const dependencyTracker = new Set<string>([path.resolve(sourcePath)]);
   const mainDir = path.dirname(sourcePath);
   
   let megaContent = `/* === MEGA from ${path.relative(workspaceRoot, sourcePath)} === */\n`;
@@ -191,7 +282,8 @@ async function buildMegaContent(
         mainDir, 
         workspaceRoot,
         output,
-        visited
+        visited,
+        dependencyTracker
       );
       if (included) {
       output?.appendLine(`[Mega] included ${includeMatch[1]} in ${mainDir}`);
@@ -203,8 +295,24 @@ async function buildMegaContent(
   }
 
   const lines = megaContent.split(/\r?\n/);
-  const sizeKB = (Buffer.byteLength(megaContent) / 1024).toFixed(1);
-  megaCache.set(sourcePath, megaContent);
+  const byteSize = Buffer.byteLength(megaContent);
+  const sizeKB = (byteSize / 1024).toFixed(1);
+  const dependencies = new Map<string, FileStamp>();
+  for (const dependencyPath of dependencyTracker) {
+    const stamp = await getFileStamp(dependencyPath);
+    if (stamp) {
+      dependencies.set(dependencyPath, stamp);
+    }
+  }
+
+  const cacheEntry: MegaCacheEntry = {
+    content: megaContent,
+    dependencies,
+    byteSize,
+    lastAccessed: Date.now(),
+  };
+  megaCache.set(cacheKey, cacheEntry);
+  evictOldMegaEntries(maxMegaCacheEntries, output);
 
   output?.appendLine(`[Mega] Built ${path.basename(sourcePath)}: lines=${lines.length}, size=${sizeKB}kB`);
   return megaContent;
@@ -600,16 +708,12 @@ export async function collectDefinesAndConsts(
   options: CollectOptions = {}
 ): Promise<CollectedCppSymbols> {
 
-  const { resolveIncludes = false, output } = options;
-  
-  // FIX: Clear module-level caches for fresh analysis
-  parsedFiles.clear();
-  megaCache.clear();
-  if (output) {
-    output.appendLine(`[CPP] Cache cleared: parsedFiles=${parsedFiles.size}, megaCache=${megaCache.size}`);
-  }
-  
-  output?.appendLine(`[CPP] entry files=${files.length}, resolveIncludes=${resolveIncludes ? 'YES' : 'NO'}`);
+  const { resolveIncludes = false, output, maxMegaCacheEntries } = options;
+  const effectiveCacheLimit = clampMegaCacheEntries(maxMegaCacheEntries);
+
+  output?.appendLine(
+    `[CPP] entry files=${files.length}, resolveIncludes=${resolveIncludes ? "YES" : "NO"}, cacheLimit=${effectiveCacheLimit}`
+  );
 
   
   const defines = new Map<string, string>();
@@ -631,7 +735,12 @@ export async function collectDefinesAndConsts(
 
     let text: string;
     if (resolveIncludes) {
-      text = await buildMegaContent(filePath, workspaceRoot, output);
+      text = await buildMegaContent(
+        filePath,
+        workspaceRoot,
+        output,
+        effectiveCacheLimit
+      );
     } else {
       try {
         text = await fsp.readFile(filePath, "utf8");
@@ -733,7 +842,12 @@ export async function collectDefinesAndConsts(
 
     let text: string;    
     if (resolveIncludes) {
-      text = await buildMegaContent(filePath, workspaceRoot, output);
+      text = await buildMegaContent(
+        filePath,
+        workspaceRoot,
+        output,
+        effectiveCacheLimit
+      );
     } else {
       try {
         text = await fsp.readFile(filePath, "utf8");
