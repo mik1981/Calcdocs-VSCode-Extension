@@ -1,3 +1,4 @@
+import * as fsp from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 
@@ -105,45 +106,126 @@ export function registerCommands({
       await openFormulaDefinition(state, label);
     }),
 
-    vscode.commands.registerCommand("calcdocs.openTestFolder", async () => {
+    vscode.commands.registerCommand(
+      "calcdocs.inlineCalc.openResult",
+      async (uri: vscode.Uri | string, line: number) => {
+        const targetUri =
+          uri instanceof vscode.Uri ? uri : vscode.Uri.parse(String(uri));
+        const safeLine = Number.isFinite(line) ? Math.max(0, Math.trunc(line)) : 0;
+        await reveal(targetUri, safeLine);
+      }
+    ),
 
-        // URI della cartella test relativa all’estensione
-        const testFolderUri = vscode.Uri.joinPath(context.extensionUri, "test");
-        
-        // Apri la cartella come workspace
-        await vscode.commands.executeCommand(
-            "vscode.openFolder",
-            testFolderUri,
-            false   // false = apri nella stessa finestra
+    vscode.commands.registerCommand("calcdocs.inlineCalc.openGuide", async () => {
+      await openInlineCalcGuide(context);
+    }),
+
+    vscode.commands.registerCommand("calcdocs.openTestFolder", async () => {
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      let testFolderUri: vscode.Uri | undefined;
+      let testFileUri: vscode.Uri | undefined;
+
+      // Determine test folder location (workspace or extension)
+      if (workspaceRoot) {
+        const workspaceTestFolder = vscode.Uri.file(path.join(workspaceRoot, "test"));
+        const workspaceTestFile = vscode.Uri.file(path.join(workspaceRoot, "test", "src", "test.c"));
+        try {
+          await fsp.access(workspaceTestFolder.fsPath);
+          testFolderUri = workspaceTestFolder;
+          try {
+            await fsp.access(workspaceTestFile.fsPath);
+            testFileUri = workspaceTestFile;
+          } catch {
+            // test.c not found in workspace, will try extension
+          }
+        } catch {
+          // test folder not in workspace
+        }
+      }
+
+      // Fallback to extension test folder
+      if (!testFolderUri) {
+        const extensionTestFolder = vscode.Uri.joinPath(context.extensionUri, "test");
+        const extensionTestFile = vscode.Uri.joinPath(context.extensionUri, "test", "src", "test.c");
+        try {
+          await fsp.access(extensionTestFolder.fsPath);
+          testFolderUri = extensionTestFolder;
+          try {
+            await fsp.access(extensionTestFile.fsPath);
+            testFileUri = extensionTestFile;
+          } catch {
+            // test.c not found in extension
+          }
+        } catch {
+          // test folder not found in extension
+        }
+      }
+
+      if (!testFolderUri) {
+        await vscode.window.showWarningMessage(
+          "CalcDocs test folder not found."
+        );
+        return;
+      }
+
+      // Check if test folder is already a workspace folder
+      const existingFolder = vscode.workspace.workspaceFolders?.find(
+        folder => folder.uri.fsPath === testFolderUri!.fsPath
+      );
+
+      if (!existingFolder) {
+        // Add test folder as a workspace folder
+        const success = vscode.workspace.updateWorkspaceFolders(
+          vscode.workspace.workspaceFolders?.length ?? 0,
+          0,
+          { uri: testFolderUri, name: "CalcDocs Test" }
         );
 
-        // 🔥 Aspetta un attimo che VS Code completi il caricamento del folder
-        setTimeout(async () => {
-            const testFileUri = vscode.Uri.joinPath(testFolderUri, "test.c");
-            await vscode.window.showTextDocument(testFileUri);
-        }, 500);
+        if (!success) {
+          await vscode.window.showWarningMessage(
+            "Failed to add test folder to workspace."
+          );
+          return;
+        }
+      }
 
-
-    // const workspaceRoot = state.workspaceRoot;
-    //   if (!workspaceRoot) {
-    //     await vscode.window.showWarningMessage("No workspace folder open");
-    //     return;
-    //   }
-
-    //   const testFolderPath = path.join(workspaceRoot, "test");
-
-    //   try {
-    //     //File: Open Folder...
-    //     //workbench.action.files.openFolder
-    //     vscode.extensions.getExtension("publisher.extensionName").extensionUri
-    //     const testFolderUri = vscode.Uri.file(testFolderPath);
-    //     state.output.debug(`testFolderUri=${testFolderUri} from testFolderPath=${testFolderPath}`);
-    //     await vscode.commands.executeCommand("workbench.action.files.openFolder", testFolderUri, { forceNewWindow: false });
-    //   } catch (error) {
-    //     await vscode.window.showWarningMessage(`Could not open test folder: ${testFolderPath}`);
-    //   }
+      // Open test.c if available
+      if (testFileUri) {
+        const document = await vscode.workspace.openTextDocument(testFileUri);
+        await vscode.window.showTextDocument(document, { preview: false });
+      }
     })
   );
+}
+
+async function openInlineCalcGuide(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  const panel = vscode.window.createWebviewPanel(
+    "calcdocsInlineGuide",
+    "CalcDocs Guide",
+    vscode.ViewColumn.Beside,
+    {
+      enableFindWidget: true,
+      retainContextWhenHidden: true,
+    }
+  );
+
+const locale = vscode.env.language.toLowerCase();
+  const guideFileName = locale.startsWith('it') ? 'inline-calc-guide_it.html' : 'inline-calc-guide_en.html';
+  const htmlUri = vscode.Uri.joinPath(
+    context.extensionUri,
+    "resources",
+    guideFileName
+  );
+
+  try {
+    const htmlContent = await fsp.readFile(htmlUri.fsPath, "utf8");
+    panel.webview.html = htmlContent;
+  } catch {
+    panel.webview.html = `<!doctype html>
+<html><body><h2>CalcDocs Guide</h2><p>Guide file not found.</p></body></html>`;
+  }
 }
 
 /**

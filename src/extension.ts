@@ -2,6 +2,11 @@ import * as vscode from "vscode";
 
 import { registerCommands } from "./commands/commands";
 import { runAnalysis, runActiveCppFileAnalysis } from "./core/analysis";
+import {
+  clearInlineCalcDiagnostics,
+  refreshInlineCalcDiagnosticsForDocument,
+  refreshInlineCalcDiagnosticsForVisibleEditors,
+} from "./core/inlineCalcDiagnostics";
 import { getConfig } from "./core/config";
 import { clearComputedState, createCalcDocsState, clearDiagnostics } from "./core/state";
 
@@ -13,8 +18,15 @@ import {
   CppValueCodeLensProvider,
   registerCppCodeLensProvider,
 } from "./providers/codeLensProvider";
+import {
+  InlineCalcCodeLensProvider,
+  registerInlineCalcCodeLensProvider,
+} from "./providers/inlineCalcCodeLensProvider";
+import { registerInlineCalcHoverProvider } from "./providers/inlineCalcHoverProvider";
+import { registerYamlHoverProvider } from "./providers/yamlHoverProvider";
 import { registerDefinitionProviders } from "./providers/definitionProvider";
 import { registerCppHoverProvider } from "./providers/hoverProvider";
+import { InlineCalcResultsViewProvider } from "./ui/inlineCalcResultsView";
 import {
   createRuntimeStatusBar,
   createStatusBar,
@@ -102,10 +114,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Crea lo stato iniziale dell'estensione per il workspace
   const state = createCalcDocsState(workspaceRoot, coloredOutput);
   state.enabled = config.enabled;
+  state.inlineCalcEnableCodeLens = config.inlineCalcEnableCodeLens;
+  state.inlineCalcEnableHover = config.inlineCalcEnableHover;
+  state.inlineCalcDiagnosticsLevel = config.inlineCalcDiagnosticsLevel;
 
   // Create diagnostics collection for YAML errors/discrepancies
   state.diagnostics = vscode.languages.createDiagnosticCollection("calcdocs");
   context.subscriptions.push(state.diagnostics);
+  state.inlineCalcDiagnostics = vscode.languages.createDiagnosticCollection(
+    "calcdocs-inline-calc"
+  );
+  context.subscriptions.push(state.inlineCalcDiagnostics);
 
 
   state.output.setLevel(config.internalDebugMode);
@@ -116,6 +135,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Crea il provider per i CodeLens (valori delle formule C/C++)
   const codeLensProvider = new CppValueCodeLensProvider(state);
+  const inlineCalcCodeLensProvider = new InlineCalcCodeLensProvider(state);
+  const inlineCalcResultsViewProvider = new InlineCalcResultsViewProvider(state);
+
+  context.subscriptions.push(
+    vscode.window.createTreeView("calcdocs.inlineCalcResults", {
+      treeDataProvider: inlineCalcResultsViewProvider,
+      showCollapseAll: false,
+    })
+  );
+
+  inlineCalcResultsViewProvider.setActiveEditor(vscode.window.activeTextEditor);
 
   // Snapshot iniziale delle risorse di sistema
   let lastResourceSnapshot: ExtensionResourceSnapshot = {
@@ -180,9 +210,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (!state.enabled) {
       clearComputedState(state);
       clearDiagnostics(state);
+      clearInlineCalcDiagnostics(state);
       refreshFormulaStatus();
       refreshRuntimeStatus();
       codeLensProvider.refresh();
+      inlineCalcCodeLensProvider.refresh();
+      inlineCalcResultsViewProvider.refresh();
       return;
     }
 
@@ -198,6 +231,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     refreshFormulaStatus();
     refreshRuntimeStatus();
     codeLensProvider.refresh();
+    inlineCalcCodeLensProvider.refresh();
+    inlineCalcResultsViewProvider.refresh();
+    refreshInlineCalcDiagnosticsForVisibleEditors(state);
   };
 
   const runActiveCppAnalysisAndRefreshUi = async (
@@ -211,6 +247,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     refreshFormulaStatus();
     refreshRuntimeStatus();
     codeLensProvider.refresh();
+    inlineCalcCodeLensProvider.refresh();
+    inlineCalcResultsViewProvider.refresh();
+    refreshInlineCalcDiagnosticsForVisibleEditors(state);
   };
 
 
@@ -234,21 +273,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Registra i provider per hover, definition e CodeLens
   registerDefinitionProviders(context, state, config.enableCppProviders);
   registerCppHoverProvider(context, state, config.enableCppProviders);
+  registerInlineCalcHoverProvider(context, state);
+  registerYamlHoverProvider(context, state);
   registerCppCodeLensProvider(context, codeLensProvider);
+  registerInlineCalcCodeLensProvider(context, inlineCalcCodeLensProvider);
 
   // Aggiorna i CodeLens quando un documento viene modificato
   context.subscriptions.push(
-    vscode.workspace.onDidChangeTextDocument(() => {
+    vscode.workspace.onDidChangeTextDocument((event) => {
       if (!state.enabled) {
         return;
       }
 
       codeLensProvider.refresh();
+      inlineCalcCodeLensProvider.refresh();
+      inlineCalcResultsViewProvider.notifyDocumentChanged(event.document);
+      refreshInlineCalcDiagnosticsForDocument(event.document, state);
+
+      const isYamlDocument =
+        (event.document.languageId === "yaml" || event.document.languageId === "yml") &&
+        (event.document.uri.scheme === "file" || event.document.uri.scheme === "untitled");
+      if (isYamlDocument) {
+        scheduler?.schedule(200);
+      }
     })
   );
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
+      inlineCalcResultsViewProvider.setActiveEditor(editor);
+      inlineCalcCodeLensProvider.refresh();
+      if (editor) {
+        refreshInlineCalcDiagnosticsForDocument(editor.document, state);
+      }
       void runActiveCppAnalysisAndRefreshUi(editor);
     })
   );
@@ -264,6 +321,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
 
+      inlineCalcResultsViewProvider.notifyDocumentChanged(document);
+      inlineCalcCodeLensProvider.refresh();
+      refreshInlineCalcDiagnosticsForDocument(document, state);
       void runActiveCppAnalysisAndRefreshUi(activeEditor);
     })
   );
@@ -293,6 +353,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const nextConfig = getConfig();
       config = nextConfig;
       state.enabled = nextConfig.enabled;
+      state.inlineCalcEnableCodeLens = nextConfig.inlineCalcEnableCodeLens;
+      state.inlineCalcEnableHover = nextConfig.inlineCalcEnableHover;
+      state.inlineCalcDiagnosticsLevel = nextConfig.inlineCalcDiagnosticsLevel;
 
       // Log del cambiamento di stato enabled
       if (previousConfig.enabled !== nextConfig.enabled) {
@@ -302,6 +365,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // Clear diagnostics if disabled
       if (!state.enabled) {
         clearDiagnostics(state);
+        clearInlineCalcDiagnostics(state);
       }
 
 
@@ -312,6 +376,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         cpuThreshold: nextConfig.resourceCpuThreshold,
       });
       refreshRuntimeStatus();
+      inlineCalcCodeLensProvider.refresh();
+      inlineCalcResultsViewProvider.refresh();
+      refreshInlineCalcDiagnosticsForVisibleEditors(state);
 
       // Determina se è necessario rieseguire l'analisi
       const analysisRelevantChange =

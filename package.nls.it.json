@@ -1,15 +1,22 @@
 {
-  "extension.description": "Excel nel codice sorgente del firmware & valutatore formule & sincronizzazione costanti C/C++ & controllo di coerenza - mostra i valori reali calcolati per trovare errori prima della compilazione, più navigazione Vai alla definizione",
+  "extension.description": "Excel nel codice sorgente del firmware & valutatore formule & sincronizzazione costanti C/C++ & controllo di coerenza - mostra i valori reali calcolati per trovare errori prima della compilazione, piu navigazione Vai alla definizione",
 
   "config.title": "CalcDocs",
   "config.enabled": "Abilita o disabilita CalcDocs senza disinstallare l'estensione.",
   "config.scanInterval": "Intervallo in secondi per la scansione periodica (0 = disattivata).",
   "config.ignoredDirs": "Cartelle da ignorare durante l'analisi.",
-  "config.enableCppProviders": "Abilita provider CalcDocs per C/C++ come fallback (priorità a C/C++ Tools).",
+  "config.enableCppProviders": "Abilita provider CalcDocs per C/C++ come fallback (priorita a C/C++ Tools).",
   "config.cppDefines": "Definizioni extra del preprocessore per valutare #if (NAME, NAME=VALUE o -DNAME=VALUE).",
   "config.cppUndefines": "Simboli preprocessore da rimuovere dopo le impostazioni progetto (NAME o -UNAME).",
   "config.cppConfiguration": "Nome configurazione preferita in .vscode/c_cpp_properties.json. Se vuoto, usa la prima configurazione.",
-  "config.cppCacheMaxEntries": "Numero massimo di unità C/C++ preprocessate mantenute nella cache LRU.",
+  "config.cppCacheMaxEntries": "Numero massimo di unita C/C++ preprocessate mantenute nella cache LRU.",
+  "config.inlineCalc.enableCodeLens": "Mostra i risultati inline calc nei CodeLens.",
+  "config.inlineCalc.enableHover": "Mostra i dettagli inline calc nell'hover.",
+  "config.inlineCalc.diagnosticsLevel.off": "Disabilita la diagnostica inline calc.",
+  "config.inlineCalc.diagnosticsLevel.errors": "Segnala solo errori inline calc.",
+  "config.inlineCalc.diagnosticsLevel.warnings": "Segnala errori e warning inline calc.",
+  "config.inlineCalc.diagnosticsLevel.info": "Segnala errori, warning e info inline calc.",
+  "config.inlineCalc.diagnosticsLevel": "Controlla quali severita inline calc vengono riportate nei diagnostics.",
   "config.resourceStatusMode.always": "Mostra sempre lo stato runtime (toggle + CPU/RAM).",
   "config.resourceStatusMode.aboveCpuThreshold": "Mostra lo stato runtime solo quando l'uso CPU supera la soglia.",
   "config.resourceStatusMode": "Controlla quando mostrare lo stato runtime in status bar.",
@@ -26,6 +33,6 @@
   "command.setScanInterval.title": "CalcDocs: Imposta intervallo scansione",
   "command.toggleEnabled.title": "CalcDocs: Toggle abilitazione",
   "command.showOutput.title": "CalcDocs: Mostra output",
-  "command.openTestFolder.title": "CalcDocs: Apri cartella di test dell'estensione"
+  "command.openTestFolder.title": "CalcDocs: Apri cartella di test dell'estensione",
+  "command.inlineCalc.openGuide.title": "CalcDocs: Apri guida inline"
 }
-

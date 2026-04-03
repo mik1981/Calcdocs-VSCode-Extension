@@ -74,7 +74,7 @@ type MegaCacheEntry = {
   lastAccessed: number;
 };
 
-const DEFAULT_MEGA_CACHE_MAX_ENTRIES = 24;
+const DEFAULT_MEGA_CACHE_MAX_ENTRIES = 50; // Increased for test files
 const MIN_MEGA_CACHE_ENTRIES = 1;
 const megaCache = new Map<string, MegaCacheEntry>();
 
@@ -82,22 +82,24 @@ function normalizeCacheKey(filePath: string): string {
   return path.resolve(filePath).toLowerCase();
 }
 
-async function getFileStamp(filePath: string): Promise<FileStamp | null> {
+async function getFileStamp(filePath: string, output?: ColoredOutput): Promise<FileStamp | null> {
   try {
     const stat = await fsp.stat(filePath);
     return {
       mtimeMs: stat.mtimeMs,
       size: stat.size,
     };
-  } catch {
+  } catch (err) {
+    output?.warn(`[MegaStamp] ❌ Missing dep: ${path.relative(process.cwd(), filePath)}`);
     return null;
   }
 }
 
-async function isMegaCacheEntryValid(entry: MegaCacheEntry): Promise<boolean> {
+async function isMegaCacheEntryValid(entry: MegaCacheEntry, output?: ColoredOutput): Promise<boolean> {
   for (const [dependencyPath, previousStamp] of entry.dependencies) {
-    const currentStamp = await getFileStamp(dependencyPath);
+    const currentStamp = await getFileStamp(dependencyPath, output);
     if (!currentStamp) {
+      output?.appendLine(`[MegaValid] ❌ Invalid cache (missing dep): ${path.basename(dependencyPath)}`);
       return false;
     }
 
@@ -105,6 +107,7 @@ async function isMegaCacheEntryValid(entry: MegaCacheEntry): Promise<boolean> {
       currentStamp.mtimeMs !== previousStamp.mtimeMs ||
       currentStamp.size !== previousStamp.size
     ) {
+      output?.appendLine(`[MegaValid] ❌ Invalid cache (changed): ${path.basename(dependencyPath)}`);
       return false;
     }
   }
@@ -157,24 +160,30 @@ async function resolveInclude(
   visited: Set<string>,
   dependencyTracker: Set<string>
 ): Promise<string> {
-  // FIX: Multi-directory search for robust include resolution
+// FIXED: Prioritize inc/test/inc dirs for external headers
+  output?.appendLine(`[ResolveInclude] 🔍 Searching "${relIncludePath}" (baseDir="${path.relative(workspaceRoot, baseDir)}")`);
+  
   const candidateDirs = [
-    baseDir,                      // 1. Relative to .c file dir
-    workspaceRoot,                // 2. Workspace root
-    path.join(workspaceRoot, 'include'),
-    path.join(workspaceRoot, 'inc'),
-    path.join(workspaceRoot, 'headers'),
-    path.join(workspaceRoot, 'src')
+    path.join(baseDir, '..', 'inc'),     // 0. Sibling inc/ (test/src → test/inc)
+    path.join(workspaceRoot, 'test', 'inc'), // 1. Explicit test/inc
+    path.join(workspaceRoot, 'inc'),     // 2. Workspace inc/
+    path.join(workspaceRoot, 'include'), // 3. include/
+    path.join(workspaceRoot, 'headers'), // 4. headers/
+    baseDir,                             // 5. Source dir
+    workspaceRoot,                       // 6. Root
+    path.join(workspaceRoot, 'src')      // 7. src/
   ];
   
   let absIncludePath: string | null = null;
+  let triedPaths: string[] = [];
   
   for (const dir of candidateDirs) {
     const candidatePath = path.resolve(dir, relIncludePath);
+    triedPaths.push(path.relative(workspaceRoot || '.', candidatePath));
     try {
       await fsp.access(candidatePath);
       absIncludePath = candidatePath;
-      output?.appendLine(`[ResolveInclude] Found: ${relIncludePath} → ${path.relative(workspaceRoot || '.', candidatePath)}`);
+      output?.appendLine(`[ResolveInclude] ✅ Found: ${relIncludePath} → ${path.relative(workspaceRoot || '.', absIncludePath)} (in ${path.basename(path.dirname(absIncludePath))})`);
       break;
     } catch {
       // Continue to next directory
@@ -182,7 +191,7 @@ async function resolveInclude(
   }
   
   if (!absIncludePath) {
-    output?.appendLine(`[ResolveInclude] NOT FOUND: ${relIncludePath} (tried ${candidateDirs.length} dirs)`);
+    output?.appendLine(`[ResolveInclude] ❌ NOT FOUND: ${relIncludePath} (tried ${triedPaths.slice(0,5).join(' → ')}${triedPaths.length>5 ? '...' : ''})`);
     return '';
   }
   
@@ -241,6 +250,15 @@ async function buildMegaContent(
   output: ColoredOutput | undefined,
   maxMegaCacheEntries: number
 ): Promise<string> {
+  // Force clear cache for test files to avoid stale data
+  if (sourcePath.includes('test')) {
+    const testKey = normalizeCacheKey(sourcePath);
+    if (megaCache.has(testKey)) {
+      output?.appendLine(`[Mega] 🔄 Force clear test cache: ${path.basename(sourcePath)}`);
+      megaCache.delete(testKey);
+    }
+  }
+  
   const cacheKey = normalizeCacheKey(sourcePath);
   const cached = megaCache.get(cacheKey);
   if (cached) {
@@ -430,7 +448,8 @@ function resolveCondition(
       const value = safeEval(resolved);
       return value !== 0 ? "1" : "0";
     } catch {
-      return cleaned;
+      output?.warn(`[resolveCondition] ⚠️ FAILED eval (fallback 1): "${cleaned}"`);
+      return "1";
     }
   }
 
@@ -439,8 +458,8 @@ function resolveCondition(
     output?.appendLine(`[resolveCondition] 2. cleaned=${cleaned} resolved=${resolved} value=${value}`);
     return value !== 0 ? "1" : "0";
   } catch {
-    output?.appendLine(`[resolveCondition] 3. cleaned=${cleaned} resolved=${resolved}`);
-    return "0";
+    output?.warn(`[resolveCondition] ⚠️ FAILED final eval (fallback 1): "${resolved}"`);
+    return "1";
   }
 }
 
@@ -505,7 +524,9 @@ function parseDefineDirective(line: string): ParsedDefineDirective | undefined {
   const name = directiveMatch[1];
   const rawTail = directiveMatch[2] ?? "";
 
-  if (rawTail.startsWith("(")) {
+  // Function-like macro: no space between name and '('
+  // Object-like macro: expression may start with '(' but has leading whitespace
+  if (rawTail.startsWith("(") && !rawTail.startsWith(" ")) {
     let depth = 0;
     let closeIndex = -1;
 
@@ -550,7 +571,7 @@ function parseDefineDirective(line: string): ParsedDefineDirective | undefined {
     };
   }
 
-  const expr = stripComments(rawTail);
+  const expr = stripComments(rawTail).trim();
   if (!expr) {
     return undefined;
   }

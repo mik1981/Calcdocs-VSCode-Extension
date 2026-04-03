@@ -10,6 +10,13 @@
   "config.cppUndefines": "Preprocessor symbols to undefine after loading project settings (NAME or -UNAME).",
   "config.cppConfiguration": "Preferred configuration name in .vscode/c_cpp_properties.json. If empty, the first configuration is used.",
   "config.cppCacheMaxEntries": "Maximum number of preprocessed C/C++ translation units kept in LRU cache.",
+  "config.inlineCalc.enableCodeLens": "Show inline calc results in CodeLens.",
+  "config.inlineCalc.enableHover": "Show inline calc details in hover popups.",
+  "config.inlineCalc.diagnosticsLevel.off": "Disable inline calc diagnostics.",
+  "config.inlineCalc.diagnosticsLevel.errors": "Report only inline calc errors.",
+  "config.inlineCalc.diagnosticsLevel.warnings": "Report inline calc errors and warnings.",
+  "config.inlineCalc.diagnosticsLevel.info": "Report inline calc errors, warnings, and info.",
+  "config.inlineCalc.diagnosticsLevel": "Controls which inline calc severities are reported in diagnostics.",
   "config.resourceStatusMode.always": "Always show runtime status (toggle + CPU/RAM).",
   "config.resourceStatusMode.aboveCpuThreshold": "Show runtime status only when CPU usage exceeds threshold.",
   "config.resourceStatusMode": "Controls when to show runtime status in status bar.",
@@ -26,6 +33,7 @@
   "command.setScanInterval.title": "CalcDocs: Set Scan Interval",
   "command.toggleEnabled.title": "CalcDocs: Toggle Enable/Disable",
   "command.showOutput.title": "CalcDocs: Show Log Output",
-  "command.openTestFolder.title": "CalcDocs: Open Extension Test Folder"
+  "command.openTestFolder.title": "CalcDocs: Open Extension Test Folder",
+  "command.inlineCalc.openGuide.title": "CalcDocs: Open Inline Guide"
 }
 

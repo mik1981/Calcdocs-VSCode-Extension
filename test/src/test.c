@@ -13,8 +13,8 @@
 
 
 // ==== Valori base ====
-#define MUL     (2<<1)
-#define VEL     20
+#define MUL     (2<<1)    //  V
+#define VEL     21
 #define NEG     -5
 
 #if K_HEX_ENABLE
@@ -60,11 +60,28 @@ uint8_t Flags; // Flags applicazione
                                 )
 
 
+#include "config.c"                              
+// @vin = 13V
+// @r = 4.7kOhm
+// @tensione = @config.vin + 1
+#define RESULT_COMPUTE_MA 2.5    // = @config.vin / @r -> mA 
+#define RESULT_NO         2.8    // @vin * @r -> mA
+
+// = 25% * 200W -> W
+// = 0.015s -> ms
+// = 100 bar + 100 kPa -> atm
+
+// = A + B #calcdocs-ignore-line
+// = BAD_EXPR #calcdocs-ignore-error
+// calcdocs-ignore-line; = @x + 1
+
+#define EvtCnt_IncSat(n)     do {} while(0);
+
 
 // Example constants
-void test_init(void)
-{
-  if (Flags < VBATT_TO_ADC(NOBAT_VOLT_TH)) {}
+void test_init(void) {
+  if (Flags < VBATT_TO_ADC(NOBAT_VOLT_TH)) {
+  }
 }
 
 

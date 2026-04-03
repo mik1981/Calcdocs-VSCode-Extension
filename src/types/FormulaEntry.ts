@@ -9,13 +9,18 @@ export type FormulaEntry = {
   key: string
   unit?: string
   formula?: string
-  dati?: string
+  exprType?: "const" | "expr" | "lookup"
   steps: string[]
   labels: FormulaLabel[]
+  revision?: string
 
   valueYaml?: number
   expanded?: string
+  resolvedDependencies?: string[]
   valueCalc?: number | null
+  explainSteps?: string[]
+  evaluationErrors?: string[]
+  evaluationWarnings?: string[]
 
   _filePath?: string
   _line?: number

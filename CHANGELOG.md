@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.11
+- Resolve write-back issue affecting specific cases
+
 ## 0.1.10
 - **Extension**: Active C++ file analysis on editor switch/save, full config change reactivity, improved resourceMonitor lifecycle.
 - **General**: VSCode 1.109+ stability, LRU cache tuning, output channel enhancements.

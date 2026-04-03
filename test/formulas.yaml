@@ -1,38 +1,49 @@
 VEL:
-  dati:
   formula: 5 * MUL
+  unit: mV
   steps: 
     - prende 5
     - lo moltiplica per MUL estratto da test.c
-  value: 20
+  value: 20000
 
 ADC_MAX:
+  unit: count
   value: 4095
 
 R_PULLUP:
+  unit: ohm
   value: 10000
 
 NTC_ADC_10K_25C:
-  dati: 10000
   formula: csv("ntc_10k_table.csv", "25", "temp_c", "resistance_ohm")
   value: 10000
 
 NTC_ADC_10K_22C:
-  dati: -11254
   formula: -csv("ntc_10k_table.csv", "23.1", "temp_c", "resistance_ohm", "linear")
   value: -11254
 
 NTC_ADC_10K_22C_ABS:
-  dati: sin(-13894)
   formula: sin(-csv("ntc_10k_table.csv", "19.1", "temp_c", "resistance_ohm", "linear"))
-  value: -0.9533986082011818
+  value: -0.953398608201182
+
+NTC_R:
+  unit: ohm
+  value: 10
+
+TEST_CURR:
+  unit: mA
+  value: 100
+
+TEST_VOLT:
+  formula: NTC_R * 200 mA
+  unit: volt
+  value: 2
 
 NTC_ADC:
-  dati: 4095 * NTC_R / (10000 + NTC_R)
   formula: ADC_MAX * NTC_R / (R_PULLUP + NTC_R)
   unit: count
   steps:
     - legge la resistenza NTC a 25C dalla tabella CSV
     - applica il partitore resistivo con pullup da 10k
     - converte la tensione in conteggi ADC a 12 bit
-  
+  value: 4.09090909090909

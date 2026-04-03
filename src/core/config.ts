@@ -11,6 +11,15 @@ import { LogLevel } from "../utils/output";
 export type ResourceStatusMode = "always" | "aboveCpuThreshold";
 
 /**
+ * Livello di diagnostica per inline calc.
+ * - "off": nessuna diagnostica
+ * - "errors": solo errori
+ * - "warnings": errori + warning
+ * - "info": errori + warning + info
+ */
+export type InlineCalcDiagnosticsLevel = "off" | "errors" | "warnings" | "info";
+
+/**
  * Opzioni per il separatore delle migliaia nei numeri formattati.
  * - "none": nessun separatore
  * - "space": spazio (standard scientifico)
@@ -44,6 +53,12 @@ export type CalcDocsConfig = {
   internalDebugMode: LogLevel;
   /** Numero massimo di file C/C++ preprocessati mantenuti in cache LRU */
   cppCacheMaxEntries: number;
+  /** Abilita/disabilita i CodeLens per inline calc nei commenti */
+  inlineCalcEnableCodeLens: boolean;
+  /** Abilita/disabilita l'hover per inline calc nei commenti */
+  inlineCalcEnableHover: boolean;
+  /** Livello di severità per la diagnostica inline calc */
+  inlineCalcDiagnosticsLevel: InlineCalcDiagnosticsLevel;
 };
 
 /**
@@ -88,6 +103,25 @@ export function getConfig(): CalcDocsConfig {
   const cppCacheMaxEntries = Number.isFinite(rawCppCacheMaxEntries)
     ? Math.max(1, Math.floor(rawCppCacheMaxEntries))
     : 24;
+  const inlineCalcEnableCodeLens = cfg.get<boolean>(
+    "inlineCalc.enableCodeLens",
+    true
+  );
+  const inlineCalcEnableHover = cfg.get<boolean>(
+    "inlineCalc.enableHover",
+    true
+  );
+  const inlineCalcDiagnosticsLevelValue = cfg.get<string>(
+    "inlineCalc.diagnosticsLevel",
+    "warnings"
+  );
+  const inlineCalcDiagnosticsLevel: InlineCalcDiagnosticsLevel =
+    inlineCalcDiagnosticsLevelValue === "off" ||
+    inlineCalcDiagnosticsLevelValue === "errors" ||
+    inlineCalcDiagnosticsLevelValue === "warnings" ||
+    inlineCalcDiagnosticsLevelValue === "info"
+      ? inlineCalcDiagnosticsLevelValue
+      : "warnings";
     // ["none", "space", "dot", "comma", "apostrophe", "narrowNoBreakSpace"].includes(internalDebugModeValue)
     //   ? internalDebugModeValue as LogLevel
     //   : "";
@@ -103,6 +137,9 @@ export function getConfig(): CalcDocsConfig {
     thousandsSeparator,
     internalDebugMode,
     cppCacheMaxEntries,
+    inlineCalcEnableCodeLens,
+    inlineCalcEnableHover,
+    inlineCalcDiagnosticsLevel,
   };
 }
 

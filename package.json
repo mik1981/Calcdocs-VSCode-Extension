@@ -2,7 +2,7 @@
   "name": "calcdocs-vscode-extension",
   "displayName": "CalcDocs – C/C++ Constants & Formula Evaluator",
   "description": "%extension.description%",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "publisher": "convergo-dev",
   "repository": {
     "type": "git",
@@ -62,7 +62,8 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onLanguage:c",
-    "onLanguage:cpp"
+    "onLanguage:cpp",
+    "onLanguage:yaml"
   ],
   "contributes": {
     "configuration": {
@@ -186,6 +187,33 @@
           "default": 24,
           "minimum": 1,
           "description": "%config.cppCacheMaxEntries%"
+        },
+        "calcdocs.inlineCalc.enableCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inlineCalc.enableCodeLens%"
+        },
+        "calcdocs.inlineCalc.enableHover": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inlineCalc.enableHover%"
+        },
+        "calcdocs.inlineCalc.diagnosticsLevel": {
+          "type": "string",
+          "default": "warnings",
+          "enum": [
+            "off",
+            "errors",
+            "warnings",
+            "info"
+          ],
+          "enumDescriptions": [
+            "%config.inlineCalc.diagnosticsLevel.off%",
+            "%config.inlineCalc.diagnosticsLevel.errors%",
+            "%config.inlineCalc.diagnosticsLevel.warnings%",
+            "%config.inlineCalc.diagnosticsLevel.info%"
+          ],
+          "description": "%config.inlineCalc.diagnosticsLevel%"
         }
       }
     },
@@ -209,8 +237,31 @@
       {
         "command": "calcdocs.openTestFolder",
         "title": "%command.openTestFolder.title%"
+      },
+      {
+        "command": "calcdocs.inlineCalc.openGuide",
+        "title": "%command.inlineCalc.openGuide.title%",
+        "icon": "$(question)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "calcdocs.inlineCalc.openGuide",
+          "when": "view == calcdocs.inlineCalcResults",
+          "group": "navigation@10"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "calcdocs.inlineCalcResults",
+          "name": "CalcDocs Inline Results",
+          "when": "workspaceFolderCount > 0"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "yaml",
@@ -231,7 +282,8 @@
     "watch": "node esbuild.js --watch",
     "vscode:prepublish": "npm run build",
     "package": "vsce package --no-dependencies",
-    "compile": "tsc -p ."
+    "compile": "tsc -p .",
+    "test:engine": "npm run compile && node --test --test-isolation=none out/engine/__tests__/units.test.js out/engine/__tests__/yamlEngine.test.js"
   },
   "icon": "resources/icon.png",
   "devDependencies": {

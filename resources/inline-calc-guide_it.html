@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CalcDocs Guida Completa: Formulas + Inline</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: transparent;
+      --text: #d4d4d4;
+      --muted: #9da5b4;
+      --card: rgba(127, 127, 127, 0.12);
+      --border: rgba(127, 127, 127, 0.35);
+      --accent: #4fc1ff;
+      --warn: #d7ba7d;
+      --err: #f48771;
+      --ok: #8bc34a;
+    }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: "Segoe UI", "Arial", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    h1, h2, h3 {
+      margin: 0 0 10px;
+      color: var(--accent);
+    }
+    h1 { font-size: 1.4rem; }
+    h2 { margin-top: 22px; font-size: 1.1rem; }
+    h3 { margin-top: 14px; font-size: 1rem; }
+    p, li { color: var(--text); }
+    .muted { color: var(--muted); }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-top: 12px;
+    }
+    code {
+      background: rgba(127, 127, 127, 0.18);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.95em;
+    }
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .tag {
+      display: inline-block;
+      margin-right: 8px;
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .err { color: var(--err); }
+  </style>
+</head>
+<body>
+  <h1>CalcDocs Guida Completa</h1>
+  <p class="muted">Formule YAML + calcoli inline per progetti C/C++ embedded.</p>
+
+  <h2>1) Formule YAML: struttura</h2>
+  <div class="card">
+<pre><code>ADC_MAX:
+  type: const
+  value: 4095
+  unit: count
+
+R_PULLUP:
+  type: const
+  value: 10
+  unit: kohm
+
+NTC_ADC:
+  type: expr
+  expr: ADC_MAX * NTC_R / (R_PULLUP + NTC_R)
+  unit: count
+  value: auto</code></pre>
+    <p><span class="tag">type: const</span> valore scalare fisso</p>
+    <p><span class="tag">type: expr</span> espressione con dipendenze</p>
+    <p><span class="tag">type: lookup</span> valore tabellare da CSV (diretto o interpolato)</p>
+  </div>
+
+  <h2>2) Grafo dipendenze e ordine di valutazione</h2>
+  <div class="card">
+    <p>CalcDocs costruisce un grafo delle dipendenze e risolve i simboli in ordine topologico.</p>
+    <ul>
+      <li><span class="err">Errore</span> se una variabile è indefinita.</li>
+      <li><span class="err">Errore</span> se c’è una dipendenza circolare.</li>
+      <li><span class="warn">Warning</span> se una formula dipende da simboli C/C++ condizionali ambigui.</li>
+    </ul>
+  </div>
+
+  <h2>3) Unità, compatibilità e controlli dimensionali</h2>
+  <div class="card">
+    <p>Unità compatibili si possono mescolare liberamente se la dimensione fisica coincide:</p>
+<pre><code>PRESSIONE_OK:
+  type: expr
+  expr: 100 bar + 10 kPa
+  unit: atm    # catena valida bar -> Pa <- kPa -> atm</code></pre>
+    <p class="muted">La conversione automatica viene applicata solo quando strettamente necessaria: somme/sottrazioni tra unità compatibili e conversioni finali tra varianti scalate della stessa unità (es. V -&gt; mV). Nelle moltiplicazioni/divisioni pure cross-sistema (es. bar -&gt; atm) viene mantenuta l'unità nativa del risultato.</p>
+    <p>Somme/sottrazioni incompatibili vengono bloccate:</p>
+<pre><code>SOMMA_ERRATA:
+  type: expr
+  expr: 10 ohm + 3 V   # errore</code></pre>
+    <p class="muted">Se <code>unit:</code> non è definita, in hover viene mostrata l’unità risultante dalla dimensione calcolata (quando disponibile).</p>
+  </div>
+
+  <h2>4) CSV / lookup nelle formule</h2>
+  <div class="card">
+<pre><code>NTC_R:
+  type: lookup
+  table: ntc_10k_table.csv
+  row: 25
+  lookupColumn: temp_c
+  valueColumn: resistance_ohm
+  interpolation: linear
+  unit: ohm</code></pre>
+    <p>Forma equivalente come espressione:</p>
+<pre><code>expr: csv("ntc_10k_table.csv", 25, "temp_c", "resistance_ohm", "linear")</code></pre>
+  </div>
+
+  <h2>5) Explain mode in hover</h2>
+  <div class="card">
+    <p>L’hover include:</p>
+    <ul>
+      <li>valore calcolato e unità finale</li>
+      <li>formula espansa</li>
+      <li>simboli risolti (con valore + unità quando disponibili)</li>
+      <li>passaggi step-by-step</li>
+    </ul>
+<pre><code>= 4095 * 10 / (10000 + 10)
+= 4095 * 10 / 10010
+= 4.0909090909</code></pre>
+  </div>
+
+  <h2>6) Calcoli inline (commenti C/C++)</h2>
+  <div class="card">
+<pre><code>// @vin = 12V
+// @r = 4.7kOhm
+// = @vin / @r -> mA
+
+// = 25% * 200W -> W
+// = 100 bar + 10 kPa -> atm
+// = 3 ft + 12 in -> m</code></pre>
+    <p>Inline supporta conversioni SI/anglosassoni compatibili e diagnostiche dimensionali.</p>
+  </div>
+
+  <h2>7) Direttive ignore inline</h2>
+  <div class="card">
+<pre><code>// = A + B #calcdocs-ignore-warning
+// = BAD_EXPR #calcdocs-ignore-error
+// calcdocs-ignore-line; = qualunque cosa</code></pre>
+    <p>Disponibili: <code>calcdocs-ignore</code>, <code>calcdocs-ignore-error</code>, <code>calcdocs-ignore-warning</code>, <code>calcdocs-ignore-info</code>, <code>calcdocs-ignore-line</code>.</p>
+  </div>
+
+  <h2>8) Estrazione unità da C/C++</h2>
+  <div class="card">
+<pre><code>#define R_PULLUP 10000 // ohm
+const float VREF = 3.3; // V</code></pre>
+    <p>CalcDocs importa automaticamente le unità trovate e arricchisce i simboli YAML. I simboli mancanti vengono proposti in diagnostica.</p>
+  </div>
+
+  <h2>9) Coesistenza hover con altre estensioni</h2>
+  <div class="card">
+    <p>L’hover CalcDocs è limitato ai contesti realmente CalcDocs (simboli/macros noti e inline), così da ridurre conflitti con IntelliSense e provider terze parti.</p>
+    <p class="muted">Se non c’è contesto CalcDocs, il provider non mostra hover e lascia invariata l’esperienza delle altre estensioni.</p>
+  </div>
+
+  <h2>10) Workflow consigliato</h2>
+  <div class="card">
+    <ol>
+      <li>Definisci costanti in C/C++ con commento unità.</li>
+      <li>Crea formule YAML con <code>type</code>, <code>expr</code> e <code>unit</code> opzionale.</li>
+      <li>Usa hover/diagnostiche per correggere undefined, cicli e mismatch unitari.</li>
+      <li>Usa inline per verifiche veloci direttamente nel sorgente.</li>
+    </ol>
+  </div>
+</body>
+</html>

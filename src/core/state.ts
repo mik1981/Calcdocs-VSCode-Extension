@@ -1,8 +1,13 @@
 import * as vscode from "vscode";
 
 import { type FunctionMacroDefinition } from "./expression";
+import type { InlineCalcDiagnosticsLevel } from "./config";
 import { FormulaEntry } from "../types/FormulaEntry";
 import { type ColoredOutput } from "../utils/output";
+import type {
+  MissingYamlSuggestion,
+  YamlEvaluationDiagnostic,
+} from "../engine/yamlEngine";
 
 
 /**
@@ -62,6 +67,7 @@ export type YamlParseErrorInfo = {
  * Stato completo dell'estensione CalcDocs per un workspace.
  * Condiviso tra analisi e provider VSCode.
  */
+export type FileConfigVars = Map<string, any>;
 export type CalcDocsState = {
   /** Percorso assoluto alla cartella root del workspace */
   workspaceRoot: string;
@@ -81,6 +87,8 @@ export type CalcDocsState = {
   formulaIndex: Map<string, FormulaEntry>;
   /** Mappa dei valori numerici risolti dei simboli: nome -> valore */
   symbolValues: Map<string, number>;
+  /** Mappa config files → their @config.* vars */
+  configVars: Map<string, FileConfigVars>;
   /** Mappa delle posizioni delle definizioni dei simboli */
   symbolDefs: Map<string, SymbolDefinitionLocation>;
   /** Mappa delle definizioni condizionali (multiple varianti per simbolo) */
@@ -99,6 +107,18 @@ export type CalcDocsState = {
   lastYamlParseError: YamlParseErrorInfo | null;
   /** VSCode diagnostics collection for formulas.yaml errors/discrepancies */
   diagnostics?: vscode.DiagnosticCollection;
+  /** VSCode diagnostics collection for inline calc comments */
+  inlineCalcDiagnostics?: vscode.DiagnosticCollection;
+  /** Diagnostics produced by the safe YAML evaluation engine */
+  yamlDiagnostics: YamlEvaluationDiagnostic[];
+  /** Suggestions inferred from C/C++ symbols not present in YAML */
+  missingYamlSuggestions: MissingYamlSuggestion[];
+  /** True se i CodeLens inline calc sono abilitati */
+  inlineCalcEnableCodeLens: boolean;
+  /** True se l'hover inline calc è abilitato */
+  inlineCalcEnableHover: boolean;
+  /** Livello di diagnostica inline calc */
+  inlineCalcDiagnosticsLevel: InlineCalcDiagnosticsLevel;
 };
 
 
@@ -140,6 +160,7 @@ export function createCalcDocsState(
     ignoredDirs: new Set<string>(),
     formulaIndex: new Map<string, FormulaEntry>(),
     symbolValues: new Map<string, number>(),
+    configVars: new Map<string, FileConfigVars>(),
     symbolDefs: new Map<string, SymbolDefinitionLocation>(),
     symbolConditionalDefs: new Map<string, SymbolConditionalDefinition[]>(),
     symbolAmbiguityRoots: new Map<string, string[]>(),
@@ -149,6 +170,12 @@ export function createCalcDocsState(
     lastAnalysisStackUsage: createDefaultAnalysisStackUsage(),
     lastYamlParseError: null,
     diagnostics: undefined,
+    inlineCalcDiagnostics: undefined,
+    yamlDiagnostics: [],
+    missingYamlSuggestions: [],
+    inlineCalcEnableCodeLens: true,
+    inlineCalcEnableHover: true,
+    inlineCalcDiagnosticsLevel: "warnings",
   };
 }
 
@@ -162,6 +189,7 @@ export function createCalcDocsState(
 export function clearComputedState(state: CalcDocsState): void {
   state.formulaIndex.clear();
   state.symbolValues.clear();
+  state.configVars.clear();
   state.symbolDefs.clear();
   state.symbolConditionalDefs.clear();
   state.symbolAmbiguityRoots.clear();
@@ -170,7 +198,10 @@ export function clearComputedState(state: CalcDocsState): void {
   state.functionDefines.clear();
   state.lastAnalysisStackUsage = createDefaultAnalysisStackUsage();
   state.lastYamlParseError = null;
+  state.yamlDiagnostics = [];
+  state.missingYamlSuggestions = [];
   clearDiagnostics(state);
+  state.inlineCalcDiagnostics?.clear();
 }
 
 /**
@@ -179,5 +210,3 @@ export function clearComputedState(state: CalcDocsState): void {
 export function clearDiagnostics(state: CalcDocsState): void {
   state.diagnostics?.clear();
 }
-
-

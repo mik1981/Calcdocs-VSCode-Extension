@@ -196,6 +196,15 @@ function getMacroName(call: string): string | null {
   return call.match(/^([A-Za-z_]\w*)/)?.[1] ?? null;
 }
 
+function isKnownCalcDocsMacro(name: string, state: CalcDocsState): boolean {
+  return (
+    state.functionDefines.has(name) ||
+    state.allDefines.has(name) ||
+    state.symbolValues.has(name) ||
+    state.formulaIndex.has(name)
+  );
+}
+
 function resolveMacroCallForHover(
   document: vscode.TextDocument,
   position: vscode.Position,
@@ -223,7 +232,10 @@ function resolveMacroCallForHover(
 
       const rhsCall = extractMacroCallFromDefineRightSide(lineText);
       if (rhsCall) {
-        macroToEvaluate = rhsCall;
+        const rhsMacroName = getMacroName(rhsCall);
+        if (rhsMacroName && isKnownCalcDocsMacro(rhsMacroName, state)) {
+          macroToEvaluate = rhsCall;
+        }
       }
       return macroToEvaluate;
     }
@@ -239,13 +251,34 @@ function resolveMacroCallForHover(
         return null;
       }
 
-      return getMacroName(rhsCall) === hoveredWord ? rhsCall : null;
+      const rhsMacroName = getMacroName(rhsCall);
+      if (
+        rhsMacroName === hoveredWord &&
+        rhsMacroName &&
+        isKnownCalcDocsMacro(rhsMacroName, state)
+      ) {
+        return rhsCall;
+      }
+
+      return null;
     }
   }
 
   const rhsCall = extractMacroCallFromDefineRightSide(lineText);
-  if (rhsCall && getMacroName(rhsCall) === hoveredWord) {
+  if (
+    rhsCall &&
+    getMacroName(rhsCall) === hoveredWord &&
+    isKnownCalcDocsMacro(hoveredWord, state)
+  ) {
     return rhsCall;
+  }
+  if (!macroToEvaluate) {
+    return null;
+  }
+
+  const macroName = getMacroName(macroToEvaluate);
+  if (!macroName || !isKnownCalcDocsMacro(macroName, state)) {
+    return null;
   }
 
   return macroToEvaluate;
@@ -386,6 +419,36 @@ function appendFormulaSection(
     }
   }
 
+  if (
+    Array.isArray(formula.resolvedDependencies) &&
+    formula.resolvedDependencies.length > 0
+  ) {
+    const resolved = formula.resolvedDependencies
+      .map((line) => `- \`${line}\``)
+      .join("\n");
+    sections.push(`*Resolved symbols:*\n${resolved}`);
+  }
+
+  if (Array.isArray(formula.explainSteps) && formula.explainSteps.length > 0) {
+    sections.push("*Explain:*");
+    sections.push(`\`\`\`text\n${formula.explainSteps.join("\n")}\n\`\`\``);
+  }
+
+  if (Array.isArray(formula.evaluationErrors) && formula.evaluationErrors.length > 0) {
+    const errorLines = formula.evaluationErrors.map((error) => `- ${error}`).join("\n");
+    sections.push(`**Evaluation errors:**\n${errorLines}`);
+  }
+
+  if (
+    Array.isArray(formula.evaluationWarnings) &&
+    formula.evaluationWarnings.length > 0
+  ) {
+    const warningLines = formula.evaluationWarnings
+      .map((warning) => `- ${warning}`)
+      .join("\n");
+    sections.push(`**Evaluation warnings:**\n${warningLines}`);
+  }
+
   const openFormulaLink = buildOpenFormulaCommandLink(symbol, formula);
   if (openFormulaLink) {
     sections.push(openFormulaLink);
@@ -395,9 +458,14 @@ function appendFormulaSection(
 function appendKnownValueSection(
   symbol: string,
   state: CalcDocsState,
-  sections: string[]
+  sections: string[],
+  inDocumentDefinitions: InDocumentSymbolDefinition[]
 ): void {
   if (state.formulaIndex.has(symbol)) {
+    return;
+  }
+
+  if (inDocumentDefinitions.length === 0) {
     return;
   }
 
@@ -553,7 +621,7 @@ function buildSymbolHoverSections(
   }
 
   appendFormulaSection(word, state, sections);
-  appendKnownValueSection(word, state, sections);
+  appendKnownValueSection(word, state, sections, inDocumentDefinitions);
 
   return sections;
 }

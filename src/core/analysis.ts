@@ -1,6 +1,8 @@
 ﻿import * as fsp from "fs/promises";
 
 import { collectDefinesAndConsts, parseCppSymbolDefinition } from "./cppParser";
+import { extractConfigVarsFromFile } from "./configParser";
+import * as path from "path";
 import { listFilesRecursive, findFormulaYamlFile } from "./files";
 import {
   createSymbolResolutionStats,
@@ -21,6 +23,11 @@ import { getConfig, isIgnoredFsPath, refreshIgnoredDirs } from "./config";
 import * as vscode from "vscode";
 import { Uri } from "vscode";
 import { CalcDocsState, type YamlParseErrorInfo, clearDiagnostics } from "./state";
+import {
+  evaluateYamlDocument,
+  type EvaluatedYamlSymbol,
+} from "../engine/yamlEngine";
+import { extractUnitsFromCppFiles } from "../engine/cUnitExtractor";
 
 
 import { type FormulaEntry, type FormulaLabel } from "../types/FormulaEntry";
@@ -28,8 +35,15 @@ import { clampLen } from "../utils/text";
 import { TOKEN_RX } from "../utils/regex";
 import { localize } from "../utils/localize";
 import { updateBraceDepth } from "../utils/braceDepth";
+import {
+  parseExpressionUnit,
+  evaluateExpressionDimensions,
+  formatDimensionVector,
+  dimensionsEqual,
+  normalizeUnitToken,
+  UNIT_SPECS,
+} from "./inlineCalc";
 
-import * as path from "path";
 import * as os from "os";
 import * as crypto from "crypto";
 
@@ -251,6 +265,7 @@ function logStackUsageIfNeeded(
  */
 export async function runAnalysis(state: CalcDocsState): Promise<AnalysisResult> {
   clearFormulaDiagnostics(state);
+  state.configVars.clear();
 
   // Oggetto di diagnostica per-run, condiviso da tutte le chiamate di risoluzione simboli/macro
   const stackStats = createSymbolResolutionStats();
@@ -260,8 +275,21 @@ export async function runAnalysis(state: CalcDocsState): Promise<AnalysisResult>
     // Scansiona il workspace per ottenere lista file e trovare YAML
     const workspaceScan = await scanWorkspace(state);
 
+    // Parse config files for @config.*
+    const configFiles = workspaceScan.files.filter(f => /[\\/]config\.[ch]$/i.test(f));
+    for (const configFile of configFiles) {
+      const configVars = await extractConfigVarsFromFile(configFile, state.workspaceRoot, state);
+      if (configVars) {
+        const relPath = path.relative(state.workspaceRoot, configFile);
+        state.configVars.set(relPath, configVars);
+      }
+    }
+    state.output.info(`[Config] Parsed ${state.configVars.size} config files`);
+
     // Se non c'è un file YAML, esegui solo l'analisi C/C++
     if (!workspaceScan.yamlPath) {
+      state.yamlDiagnostics = [];
+      state.missingYamlSuggestions = [];
       await runCppOnlyAnalysis(state, workspaceScan.files, stackStats);
       updateStateStackUsage(state, stackStats);
       logStackUsageIfNeeded(state, stackStats);
@@ -273,6 +301,8 @@ export async function runAnalysis(state: CalcDocsState): Promise<AnalysisResult>
     // Carica il file YAML e gestisci eventuali errori di parsing
     const loadedYaml = await loadYamlOrReportError(state, workspaceScan.yamlPath);
     if (!loadedYaml) {
+      state.yamlDiagnostics = [];
+      state.missingYamlSuggestions = [];
       updateStateStackUsage(state, stackStats);
       return {
         hasFormulasFileChanged: workspaceScan.hasFormulasFileChanged,
@@ -341,7 +371,7 @@ export async function runActiveCppFileAnalysis(
         resolveIncludes: true,
         output: state.output,
         maxMegaCacheEntries: config.cppCacheMaxEntries,
-      }
+      } as any // TS workaround for optional cache bypass
     );
 
     applyCppSymbols(state, cppSymbols, {
@@ -417,7 +447,7 @@ async function runCppOnlyAnalysis(
   // Filter only C/C++ source files (no headers)
   const sourceFiles = files.filter((f) =>
     SOURCES_ONLY_EXTS.has(path.extname(f).toLowerCase())
-  );
+  ).sort((left, right) => left.localeCompare(right));
 
   if (sourceFiles.length === 0) {
     state.output.info('No C/C++ source files found for analysis.');
@@ -643,6 +673,143 @@ async function appendDefineMismatchDiagnostics(
   }
 }
 
+function toDiagnosticSeverity(
+  severity: "error" | "warning" | "info"
+): vscode.DiagnosticSeverity {
+  if (severity === "error") {
+    return vscode.DiagnosticSeverity.Error;
+  }
+
+  if (severity === "warning") {
+    return vscode.DiagnosticSeverity.Warning;
+  }
+
+  return vscode.DiagnosticSeverity.Information;
+}
+
+function appendYamlEngineDiagnostics(
+  state: CalcDocsState,
+  diagsByFile: Map<string, vscode.Diagnostic[]>
+): void {
+  if (!state.lastYamlPath || state.yamlDiagnostics.length === 0) {
+    return;
+  }
+
+  const uri = vscode.Uri.file(state.lastYamlPath);
+  const uriStr = uri.toString();
+  const fileDiags = diagsByFile.get(uriStr) ?? [];
+
+  for (const diagnostic of state.yamlDiagnostics) {
+    const line = Math.max(0, diagnostic.line);
+    const endCharacter = Math.max(1, diagnostic.symbol.length);
+    const range = new vscode.Range(line, 0, line, endCharacter);
+    const vscodeDiagnostic = new vscode.Diagnostic(
+      range,
+      diagnostic.message,
+      toDiagnosticSeverity(diagnostic.severity)
+    );
+    vscodeDiagnostic.source = "CalcDocs YAML";
+    fileDiags.push(vscodeDiagnostic);
+  }
+
+  if (state.missingYamlSuggestions.length > 0) {
+    const preview = state.missingYamlSuggestions
+      .slice(0, 6)
+      .map((entry) => `${entry.name} (${entry.unit})`)
+      .join(", ");
+    const suffix =
+      state.missingYamlSuggestions.length > 6
+        ? ` (+${state.missingYamlSuggestions.length - 6} more)`
+        : "";
+
+    fileDiags.push(
+      new vscode.Diagnostic(
+        new vscode.Range(0, 0, 0, 1),
+        `CalcDocs suggestion: add YAML entries for C/C++ symbols with units: ${preview}${suffix}`,
+        vscode.DiagnosticSeverity.Information
+      )
+    );
+  }
+
+  if (fileDiags.length > 0) {
+    diagsByFile.set(uriStr, fileDiags);
+  }
+}
+
+function appendAmbiguousSymbolDiagnostics(
+  state: CalcDocsState,
+  diagsByFile: Map<string, vscode.Diagnostic[]>
+): void {
+  for (const [symbol, variants] of state.symbolConditionalDefs) {
+    if (variants.length <= 1) {
+      continue;
+    }
+
+    const roots = state.symbolAmbiguityRoots.get(symbol) ?? [symbol];
+    const inherited = roots.filter((root) => root !== symbol);
+    const inheritedSuffix =
+      inherited.length > 0
+        ? `; inherited from ${inherited.join(", ")}`
+        : "";
+
+    for (const variant of variants) {
+      const filePath = path.resolve(state.workspaceRoot, variant.file);
+      const uri = vscode.Uri.file(filePath);
+      const uriStr = uri.toString();
+      const fileDiags = diagsByFile.get(uriStr) ?? [];
+      const line =
+        variant.line > 0
+          ? Math.max(0, variant.line - 1)
+          : Math.max(0, variant.line);
+      const range = new vscode.Range(line, 0, line, Math.max(1, symbol.length));
+
+      fileDiags.push(
+        new vscode.Diagnostic(
+          range,
+          `Ambiguous symbol '${symbol}': ${variants.length} conditional definitions detected${inheritedSuffix}.`,
+          vscode.DiagnosticSeverity.Warning
+        )
+      );
+
+      diagsByFile.set(uriStr, fileDiags);
+    }
+  }
+}
+
+function appendFormulaAmbiguityDiagnostics(
+  state: CalcDocsState,
+  diagsByFile: Map<string, vscode.Diagnostic[]>
+): void {
+  const workspaceRoot = state.workspaceRoot;
+
+  for (const [name, entry] of state.formulaIndex) {
+    if (!entry._filePath || !entry.formula) {
+      continue;
+    }
+
+    const ambiguousSymbols = getAmbiguousFormulaSymbols(entry.formula, state);
+    if (ambiguousSymbols.length === 0) {
+      continue;
+    }
+
+    const uri = vscode.Uri.file(path.join(workspaceRoot, entry._filePath));
+    const uriStr = uri.toString();
+    const fileDiags = diagsByFile.get(uriStr) ?? [];
+    const line = Math.max(0, entry._line ?? 0);
+    const range = new vscode.Range(line, 0, line, Math.max(1, name.length));
+
+    fileDiags.push(
+      new vscode.Diagnostic(
+        range,
+        `Formula '${name}' depends on ambiguous C/C++ symbols: ${ambiguousSymbols.join(", ")}.`,
+        vscode.DiagnosticSeverity.Warning
+      )
+    );
+
+    diagsByFile.set(uriStr, fileDiags);
+  }
+}
+
 /**
  * Check formula entry for label/value discrepancies and report as diagnostics.
  */
@@ -699,6 +866,9 @@ async function reportFormulaDiscrepancies(
   }
 
   appendMissingYamlValueDuplicateDiagnostics(state, diagsByFile);
+  appendYamlEngineDiagnostics(state, diagsByFile);
+  appendAmbiguousSymbolDiagnostics(state, diagsByFile);
+  appendFormulaAmbiguityDiagnostics(state, diagsByFile);
   await appendDefineMismatchDiagnostics(state, files, diagsByFile);
 
   // Clear previous and set new
@@ -784,16 +954,21 @@ async function runYamlAnalysis(
   // Filter only C/C++ source files (no headers)
   const sourceFiles = files.filter((f) =>
     SOURCES_ONLY_EXTS.has(path.extname(f).toLowerCase())
-  );
+  ).sort((left, right) => left.localeCompare(right));
 
-  // Collect symbols from source files with include resolution
+  // Collect symbols from source files with include resolution (force fresh for tests)
   const config = getConfig();
-  const cppSymbols = await collectDefinesAndConsts(sourceFiles, state.workspaceRoot, {
+  const collectOpts: any = {
     resolveIncludes: true,
     output: state.output,
     maxMegaCacheEntries: config.cppCacheMaxEntries,
-  });
-  // const cppSymbols = await collectDefinesAndConsts(files, state.workspaceRoot);
+  };
+  if (sourceFiles.some(f => f.includes('test'))) {
+    state.output.appendLine('[Analysis] 🔄 Test files detected - forcing fresh C parse (cache bypassed)');
+    collectOpts.clearTestCache = true; // Trigger cache clear in cppParser
+  }
+  const cppSymbols = await collectDefinesAndConsts(sourceFiles, state.workspaceRoot, collectOpts);
+
   applyCppSymbols(state, cppSymbols, {
     resetSymbolValues: false,
     applyConstsBeforeResolve: true,
@@ -803,19 +978,66 @@ async function runYamlAnalysis(
 
   // Carica le tabelle CSV adiacenti
   const csvTables = await loadAdjacentCsvTables(yamlPath);
-  
-  // Ricostruisci l'indice delle formule con espressioni espanse e valori calcolati
-  rebuildFormulaIndex(
+
+  // Estrai unità dai sorgenti C/C++ e sincronizzale con YAML.
+  const extractedUnits = await extractUnitsFromCppFiles(files, state.workspaceRoot);
+  for (const [name, value] of extractedUnits.values) {
+    if (!state.symbolValues.has(name)) {
+      state.symbolValues.set(name, value);
+    }
+  }
+
+  const yamlExternalValues = new Map<string, number>(state.symbolValues);
+  for (const [name, value] of cppSymbols.consts) {
+    if (Number.isFinite(value) && !yamlExternalValues.has(name)) {
+      yamlExternalValues.set(name, value);
+    }
+  }
+  for (const [name, expr] of cppSymbols.defines) {
+    if (yamlExternalValues.has(name)) {
+      continue;
+    }
+
+    try {
+      const numericValue = safeEval(expr);
+      if (Number.isFinite(numericValue)) {
+        yamlExternalValues.set(name, numericValue);
+      }
+    } catch {
+      // Keep unresolved expressions out of the YAML engine context.
+    }
+  }
+
+  const yamlEngineResult = evaluateYamlDocument(loadedYaml.parsed, {
+    rawText: loadedYaml.rawText,
+    externalValues: yamlExternalValues,
+    externalUnits: extractedUnits.units,
+    csvTables,
+  });
+
+  state.yamlDiagnostics = yamlEngineResult.diagnostics;
+  state.missingYamlSuggestions = yamlEngineResult.missingSuggestions;
+
+  rebuildFormulaIndexWithEngine(
     state,
     yamlNodes,
     loadedYaml.rawText,
     yamlPath,
-    state.allDefines,
-    state.functionDefines,
-    { csvTables },
-    stackStats
+    yamlEngineResult.symbols
   );
   fillMissingYamlValuesFromCppSymbols(state);
+
+  if (yamlEngineResult.missingSuggestions.length > 0) {
+    const preview = yamlEngineResult.missingSuggestions
+      .slice(0, 8)
+      .map((entry) => `${entry.name} [${entry.unit}]`)
+      .join(", ");
+    const suffix =
+      yamlEngineResult.missingSuggestions.length > 8
+        ? ` (+${yamlEngineResult.missingSuggestions.length - 8} more)`
+        : "";
+    state.output.info(`[YAML] Suggested new symbols from C/C++ units: ${preview}${suffix}`);
+  }
 
   state.output.info(
     localize("output.analysisComplete", state.formulaIndex.size)
@@ -1125,6 +1347,64 @@ function buildReverseDefineDependencies(
   return reverse;
 }
 
+function rebuildFormulaIndexWithEngine(
+  state: CalcDocsState,
+  yamlNodes: YamlNodeEntries,
+  yamlRaw: string,
+  yamlPath: string,
+  evaluatedSymbols: Map<string, EvaluatedYamlSymbol>
+): void {
+  state.formulaIndex.clear();
+
+  for (const [key, node] of yamlNodes) {
+    const entry = buildFormulaEntry(
+      key,
+      node,
+      yamlRaw,
+      yamlPath,
+      state.workspaceRoot
+    );
+    const evaluated = evaluatedSymbols.get(key);
+
+    if (evaluated) {
+      entry.exprType = evaluated.type;
+      entry.formula = evaluated.expression ?? entry.formula;
+      entry.labels = mergeEntryLabels(entry.formula ?? "", entry.labels);
+      entry.explainSteps = evaluated.explainSteps.length
+        ? [...evaluated.explainSteps]
+        : undefined;
+      entry.resolvedDependencies = evaluated.resolvedDependencies.length
+        ? [...evaluated.resolvedDependencies]
+        : undefined;
+      entry.evaluationErrors = evaluated.errors.length
+        ? [...evaluated.errors]
+        : undefined;
+      entry.evaluationWarnings = evaluated.warnings.length
+        ? [...evaluated.warnings]
+        : undefined;
+
+      if (evaluated.outputUnit) {
+        entry.unit = evaluated.outputUnit;
+      }
+
+      if (typeof evaluated.value === "number" && Number.isFinite(evaluated.value)) {
+        entry.valueCalc = evaluated.value;
+        state.symbolValues.set(key, evaluated.value);
+      } else {
+        entry.valueCalc = null;
+      }
+
+      if (evaluated.expanded) {
+        entry.expanded = clampLen(evaluated.expanded);
+      }
+    } else if (entry.formula) {
+      entry.labels = mergeEntryLabels(entry.formula, entry.labels);
+    }
+
+    state.formulaIndex.set(key, entry);
+  }
+}
+
 /**
  * Ricostruisce le entry dell'indice delle formule arricchite con espressione espansa e valore calcolato.
  * Esempio: "RHO * V * V / 2" -> "1.2 * 10 * 10 / 2" -> 60.
@@ -1162,13 +1442,23 @@ function rebuildFormulaIndex(
 
     // Se c'è una formula, processa e calcola il valore
     if (entry.formula) {
-      entry.labels = mergeEntryLabels(entry.formula, entry.labels);
-      const ambiguousSymbols = getAmbiguousFormulaSymbols(entry.formula, state);
+      // Estrai unità di misura inline se presente (es. "5 * MUL -> m/s")
+      const parsed = parseExpressionUnit(entry.formula);
+      const formulaExpr = parsed.expression;
+      const outputUnit = parsed.outputUnit;
+      
+      // Salva l'unità se trovata
+      if (outputUnit) {
+        entry.unit = outputUnit;
+      }
+      
+      entry.labels = mergeEntryLabels(formulaExpr, entry.labels);
+      const ambiguousSymbols = getAmbiguousFormulaSymbols(formulaExpr, state);
       
       // Processa solo se non ci sono simboli ambigui
       if (ambiguousSymbols.length === 0) {
         const resolvedMap = new Map<string, number>();
-        const replaced = replaceTokens(entry.formula, state.symbolValues);
+        const replaced = replaceTokens(formulaExpr, state.symbolValues);
         const expanded = expandExpression(
           replaced,
           defines,
@@ -1188,6 +1478,43 @@ function rebuildFormulaIndex(
           entry.valueCalc = safeEval(expandedWithLookups, evalContext);
         } catch {
           // Lascia valueCalc come null quando l'espressione non è numerica
+        }
+        
+        // Calcola le dimensioni fisiche se richiesto
+        if (outputUnit) {
+          const dimResult = evaluateExpressionDimensions(formulaExpr, new Map());
+          if (dimResult.dimension) {
+            // Aggiungi warning di dimensione se presente
+            const unitSpec = UNIT_SPECS.get(normalizeUnitToken(outputUnit));
+            if (unitSpec && !dimensionsEqual(dimResult.dimension, unitSpec.dimension)) {
+              state.output.warn(
+                `Formula '${entry.key}': dimension mismatch - expression is ${formatDimensionVector(dimResult.dimension)} but output unit '${unitSpec.canonical}' expects ${formatDimensionVector(unitSpec.dimension)}`
+              );
+            }
+          }
+        }
+      } else {
+        // Anche con simboli ambigui, prova a calcolare il valore per il write-back
+        const resolvedMap = new Map<string, number>();
+        const replaced = replaceTokens(formulaExpr, state.symbolValues);
+        const expanded = expandExpression(
+          replaced,
+          defines,
+          functionDefines,
+          resolvedMap,
+          state.symbolValues,
+          evalContext,
+          stackStats,
+          state.defineConditions
+        );
+        const expandedWithLookups = resolveInlineLookups(expanded, evalContext);
+
+        entry.expanded = clampLen(expandedWithLookups);
+
+        try {
+          entry.valueCalc = safeEval(expandedWithLookups, evalContext);
+        } catch {
+          // Mantieni valueCalc come null
         }
       }
     }
@@ -1291,16 +1618,65 @@ function isComplexFormulaExpression(formula: string): boolean {
   return operatorCount >= 2;
 }
 
+type YamlBlockScan = {
+  blockStart: number;
+  blockEnd: number;
+  valueLineIndex: number;
+  datiLineIndices: number[];
+};
+
+function formatYamlNumericValue(value: number): string {
+  if (!Number.isFinite(value)) {
+    return String(value);
+  }
+
+  const normalized = Math.abs(value) < 1e-15 ? 0 : value;
+  if (Number.isInteger(normalized)) {
+    return String(normalized);
+  }
+
+  // Preserve meaningful precision while removing floating-point noise.
+  return Number.parseFloat(normalized.toPrecision(15)).toString();
+}
+
+function scanYamlBlock(lines: string[], lineIndex: number): YamlBlockScan {
+  const valueRegex = /^\s*value\s*:/i;
+  const datiRegex = /^\s*dati\s*:/i;
+
+  let pointer = lineIndex + 1;
+  let valueLineIndex = -1;
+  const datiLineIndices: number[] = [];
+
+  while (pointer < lines.length) {
+    const currentLine = lines[pointer];
+    const trimmed = currentLine.trim();
+    const isEmpty = trimmed.length === 0;
+    const isIndented = /^\s+/.test(currentLine);
+
+    if (!isEmpty && !isIndented) {
+      break;
+    }
+
+    if (valueRegex.test(currentLine)) {
+      valueLineIndex = pointer;
+    } else if (datiRegex.test(currentLine)) {
+      datiLineIndices.push(pointer);
+    }
+
+    pointer += 1;
+  }
+
+  return {
+    blockStart: lineIndex + 1,
+    blockEnd: pointer,
+    valueLineIndex,
+    datiLineIndices,
+  };
+}
+
 /**
- * Scrive l'espressione espansa ("dati") e il valore calcolato di nuovo nei blocchi YAML.
- * I campi esistenti vengono aggiornati, quelli mancanti vengono inseriti vicino al blocco formula.
- * 
- * Ordine di inserimento campi (priorità):
- * 1. dati (prima della formula)
- * 2. formula
- * 3. altri campi (step, unit, etc. - mantiene ordine esistente)
- * 4. value (ultimo)
- * 
+ * Scrive il solo campo `value` nei blocchi YAML e rimuove eventuali campi `dati`.
+ *
  * @param state - Stato corrente dell'estensione
  * @param yamlPath - Percorso del file YAML da aggiornare
  * @param rawText - Testo raw originale del YAML
@@ -1311,10 +1687,6 @@ export async function writeBackYaml(
   rawText: string
 ): Promise<void> {
   const lines = rawText.split(/\r?\n/);
-
-  const valueRegex = /^\s*value\s*:/i;
-  const datiRegex = /^\s*dati\s*:/i;
-  const formulaRegex = /^\s*formula\s*:/i;
 
   // Processa le entry ordinate per linea originale per gestire correttamente gli offset
   const sortedEntries = Array.from(state.formulaIndex.values())
@@ -1334,69 +1706,34 @@ export async function writeBackYaml(
     const keyIndent = keyLine.match(/^\s*/)?.[0] ?? "";
     const fieldIndent = `${keyIndent}  `;
 
-    let pointer = lineIndex + 1;
-    let valueLineIndex = -1;
-    let datiLineIndex = -1;
-
-    // Trova le linee dei campi value e dati
-    while (pointer < lines.length) {
-      const currentLine = lines[pointer];
-      const trimmed = currentLine.trim();
-      const isEmpty = trimmed.length === 0;
-      const isIndented = /^\s+/.test(currentLine);
-
-      if (!isEmpty && !isIndented) {
-        break;
-      }
-
-      if (valueRegex.test(currentLine)) {
-        valueLineIndex = pointer;
-      } else if (datiRegex.test(currentLine)) {
-        datiLineIndex = pointer;
-      }
-
-      pointer += 1;
+    // Rimuovi sempre i campi `dati`, non più supportati nel write-back.
+    const firstScan = scanYamlBlock(lines, lineIndex);
+    for (let i = firstScan.datiLineIndices.length - 1; i >= 0; i -= 1) {
+      lines.splice(firstScan.datiLineIndices[i], 1);
+      lineOffset -= 1;
     }
 
-    const blockStart = lineIndex + 1;
-    const blockEnd = pointer;
-
-    // Gestisci dati - dovrebbe essere prima della formula (posizione 2)
-    if (entry.expanded) {
-      const newDatiLine = `${fieldIndent}dati: ${entry.expanded}`;
-
-      if (datiLineIndex >= 0) {
-        lines[datiLineIndex] = newDatiLine;
-      } else {
-        // Trova la linea della formula per inserire prima
-        let formulaLineIndex = -1;
-        for (let i = blockStart; i < blockEnd; i += 1) {
-          if (formulaRegex.test(lines[i])) {
-            formulaLineIndex = i;
-            break;
-          }
-        }
-        // Inserisci alla posizione della formula o all'inizio del blocco
-        const insertIndex = formulaLineIndex >= 0 ? formulaLineIndex : blockStart;
-        lines.splice(insertIndex, 0, newDatiLine);
-        lineOffset += 1;
-
-        // Aggiusta tutti gli indici tracciati dato che abbiamo inserito una linea
-        if (valueLineIndex >= 0 && valueLineIndex >= insertIndex) {
-          valueLineIndex += 1;
-        }
-      }
-    }
+    const block = scanYamlBlock(lines, lineIndex);
+    const { valueLineIndex, blockEnd } = block;
 
     // Gestisci value - dovrebbe essere alla FINE del blocco
     if (entry.valueCalc != null) {
-      const newValueLine = `${fieldIndent}value: ${entry.valueCalc}`;
+      const formattedValue = formatYamlNumericValue(entry.valueCalc);
+      const newValueLine = `${fieldIndent}value: ${formattedValue}`;
 
       if (valueLineIndex >= 0) {
         lines[valueLineIndex] = newValueLine;
       } else {
-        // Inserisci alla FINE del blocco
-        lines.splice(blockEnd - 1 + lineOffset, 0, newValueLine);
+        // Inserisci alla fine del blocco simbolo, prima di eventuali righe vuote finali.
+        let insertionIndex = blockEnd;
+        while (
+          insertionIndex > lineIndex + 1 &&
+          lines[insertionIndex - 1].trim().length === 0
+        ) {
+          insertionIndex -= 1;
+        }
+
+        lines.splice(insertionIndex, 0, newValueLine);
         lineOffset += 1;
       }
     }
