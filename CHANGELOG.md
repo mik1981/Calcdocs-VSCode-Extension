@@ -1,7 +1,17 @@
 # Changelog
 
-## 0.1.11
+## 0.1.12
 - Resolve write-back issue affecting specific cases
+- Expanded test files with additional cases to improve coverage
+- Update README.md
+
+## 0.1.11
+- Fixed false "multiple conditional definitions" warnings across different source files (shared includes).
+- Added semantic deduplication of define variants (condition + expr) in cppParser.ts.
+- collectDefinesAndConsts now returns already deduplicated defineVariants.
+- Added regression tests in cppParser.test.ts: cross-file deduplication + distinct variant preservation.
+- Updated package.json test script to include new tests.
+- Verified: \`npm run test:engine\` (9 passed, 0 failed).
 
 ## 0.1.10
 - **Extension**: Active C++ file analysis on editor switch/save, full config change reactivity, improved resourceMonitor lifecycle.

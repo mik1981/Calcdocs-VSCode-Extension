@@ -4,6 +4,11 @@
   #error "manca include di test.h
 #endif
 
+#if defined(__TEST_H)
+
+#else
+
+#define MULTIPLE_CONDITION_TEST   (4*ADC_RES)
 
 #if DEBUG_MODE == 1
   #define K_HEX_ENABLE 1
@@ -113,3 +118,5 @@ int main() {
 
   return 0;
 }
+
+#endif

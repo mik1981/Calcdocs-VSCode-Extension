@@ -56,6 +56,7 @@ const IF_RX = /^\s*#\s*if\b(.+)$/;
 const ELIF_RX = /^\s*#\s*elif\b(.+)$/;
 const ELSE_RX = /^\s*#\s*else\b/;
 const ENDIF_RX = /^\s*#\s*endif\b/;
+const UNDEF_RX = /^\s*#\s*undef\s+([A-Za-z_]\w*)\b/;
 const CONTROL_FLOW_KEYWORD_RX =
   /^(?:if|else|for|while|switch|case|return|goto|do)\b/;
 
@@ -380,10 +381,16 @@ function normalizeDirectiveCondition(raw: string): string {
   return cleaned.length > 0 ? cleaned : "1";
 }
 
+function parseDefineNameDirective(line: string): string | undefined {
+  const match = stripComments(line).match(/^\s*#\s*define\s+([A-Za-z_]\w*)\b/);
+  return match?.[1];
+}
+
 function resolveCondition(
   rawCondition: string,
   defines: Map<string, string>,
   consts: Map<string, number>,
+  definedSymbols: Set<string>,
   output?: ColoredOutput,
 ): string {
   const cleaned = stripComments(rawCondition).trim();
@@ -400,15 +407,15 @@ function resolveCondition(
   output?.appendLine(`resolveCondition input: "${rawCondition}" -> "${cleaned}"`); // TEMP DEBUG
   
   resolved = resolved.replace(/defined\s*\(\s*([A-Za-z_]\w*)\s*\)/gi, (_, symbol) => {
-    return defines.has(symbol) || consts.has(symbol) ? "1" : "0";
+    return definedSymbols.has(symbol) || consts.has(symbol) ? "1" : "0";
   });
   
   resolved = resolved.replace(/!\s*defined\s*\(\s*([A-Za-z_]\w*)\s*\)/gi, (_, symbol) => {
-    return defines.has(symbol) || consts.has(symbol) ? "0" : "1";
+    return definedSymbols.has(symbol) || consts.has(symbol) ? "0" : "1";
   });
 
-  const tokens = resolved.match(TOKEN_RX) ?? [];
-  let hasUnresolvedSymbols = false;
+  const tokenSet = new Set(resolved.match(TOKEN_RX) ?? []);
+  const tokens = Array.from(tokenSet);
 
   for (const token of tokens) {
     if (token === "defined" || token === "sizeof" || token === "nullptr") {
@@ -427,6 +434,11 @@ function resolveCondition(
       continue;
     }
 
+    if (definedSymbols.has(token) && !defines.has(token)) {
+      resolved = resolved.replace(new RegExp(`\\b${token}\\b`, "g"), "1");
+      continue;
+    }
+
     if (defines.has(token)) {
       const expr = defines.get(token)!;
 
@@ -439,27 +451,17 @@ function resolveCondition(
       continue;
     }
 
-    hasUnresolvedSymbols = true;
-  }
-
-  if (hasUnresolvedSymbols && resolved !== cleaned) {
-    try {
-      output?.appendLine(`[resolveCondition] 1. cleaned=${cleaned} resolved=${resolved}`);
-      const value = safeEval(resolved);
-      return value !== 0 ? "1" : "0";
-    } catch {
-      output?.warn(`[resolveCondition] ⚠️ FAILED eval (fallback 1): "${cleaned}"`);
-      return "1";
-    }
+    // In C preprocessor #if expressions, unknown identifiers are treated as 0.
+    resolved = resolved.replace(new RegExp(`\\b${token}\\b`, "g"), "0");
   }
 
   try {
     const value = safeEval(resolved);
-    output?.appendLine(`[resolveCondition] 2. cleaned=${cleaned} resolved=${resolved} value=${value}`);
+    output?.appendLine(`[resolveCondition] cleaned=${cleaned} resolved=${resolved} value=${value}`);
     return value !== 0 ? "1" : "0";
   } catch {
-    output?.warn(`[resolveCondition] ⚠️ FAILED final eval (fallback 1): "${resolved}"`);
-    return "1";
+    output?.warn(`[resolveCondition] ⚠️ FAILED final eval (fallback 0): "${resolved}"`);
+    return "0";
   }
 }
 
@@ -513,6 +515,61 @@ function buildElseCondition(branchConditions: string[]): string {
   }
 
   return branchConditions.map((condition) => negateCondition(condition)).join(" && ");
+}
+
+function normalizeVariantCondition(condition: string): string {
+  const trimmed = condition.trim();
+  if (!trimmed || trimmed === "1" || trimmed.toLowerCase() === "always") {
+    return "always";
+  }
+
+  try {
+    const value = safeEval(trimmed);
+    if (Number.isFinite(value)) {
+      return value !== 0 ? "always" : "0";
+    }
+  } catch {
+    // keep raw symbolic condition when not directly evaluable
+  }
+
+  return trimmed.replace(/\s+/g, " ");
+}
+
+function normalizeVariantExpression(expr: string): string {
+  return expr.trim().replace(/\s+/g, " ");
+}
+
+function buildVariantDedupKey(variant: SymbolConditionalDefinition): string {
+  const normalizedCondition = normalizeVariantCondition(variant.condition);
+  const normalizedExpression = normalizeVariantExpression(variant.expr);
+  return `${normalizedCondition}::${normalizedExpression}`;
+}
+
+function dedupeDefineVariants(
+  defineVariants: Map<string, SymbolConditionalDefinition[]>
+): Map<string, SymbolConditionalDefinition[]> {
+  const deduped = new Map<string, SymbolConditionalDefinition[]>();
+
+  for (const [name, variants] of defineVariants) {
+    const seenKeys = new Set<string>();
+    const uniqueVariants: SymbolConditionalDefinition[] = [];
+
+    for (const variant of variants) {
+      const dedupKey = buildVariantDedupKey(variant);
+      if (seenKeys.has(dedupKey)) {
+        continue;
+      }
+
+      seenKeys.add(dedupKey);
+      uniqueVariants.push({ ...variant });
+    }
+
+    if (uniqueVariants.length > 0) {
+      deduped.set(name, uniqueVariants);
+    }
+  }
+
+  return deduped;
 }
 
 function parseDefineDirective(line: string): ParsedDefineDirective | undefined {
@@ -743,6 +800,7 @@ export async function collectDefinesAndConsts(
   const defineVariants = new Map<string, SymbolConditionalDefinition[]>();
   const consts = new Map<string, number>();
   const locations = new Map<string, SymbolDefinitionLocation>();
+  const globallyDefinedSymbols = new Set<string>();
 
   const SOURCES_ONLY_EXTS = new Set([".c", ".cpp", ".cc"]);
   const effectiveFiles = resolveIncludes 
@@ -801,6 +859,11 @@ export async function collectDefinesAndConsts(
       }
 
       // ---- parse defines ----
+      const defineName = parseDefineNameDirective(line);
+      if (defineName) {
+        globallyDefinedSymbols.add(defineName);
+      }
+
       const parsedDefine = parseDefineDirective(line);
       if (parsedDefine && !seenDefinesInFile.has(parsedDefine.name)) {
         seenDefinesInFile.add(parsedDefine.name); // mark as seen for this file
@@ -883,6 +946,7 @@ export async function collectDefinesAndConsts(
     let currentCondition: string | null = null;
     let braceDepth = 0;
     const seenVariants = new Set<string>();
+    const activeDefinedSymbols = new Set<string>(globallyDefinedSymbols);
 
     for (let i = 0; i < lines.length; i += 1) {
       const line = lines[i];
@@ -893,8 +957,13 @@ export async function collectDefinesAndConsts(
       // Conditional directives...
       const ifdefMatch = directiveLine.match(IFDEF_RX);
       if (ifdefMatch) {
-        // ... (same as original)
-        const branchCondition = `defined(${ifdefMatch[1]})`;
+        const branchCondition = resolveCondition(
+          `defined(${ifdefMatch[1]})`,
+          defines,
+          consts,
+          activeDefinedSymbols,
+          output
+        );
         const activeCondition = combineConditions(currentCondition, branchCondition);
 
         conditionalStack.push({
@@ -915,7 +984,13 @@ export async function collectDefinesAndConsts(
             conditionalStack.length
           )
             ? "1"
-            : `!defined(${ifndefMatch[1]})`;
+            : resolveCondition(
+                `!defined(${ifndefMatch[1]})`,
+                defines,
+                consts,
+                activeDefinedSymbols,
+                output
+              );
           const activeCondition = combineConditions(currentCondition, branchCondition);
 
           conditionalStack.push({
@@ -930,7 +1005,13 @@ export async function collectDefinesAndConsts(
           const ifMatch = directiveLine.match(IF_RX);
           if (ifMatch) {
             const rawCondition = ifMatch[1];
-            const branchCondition = resolveCondition(rawCondition, defines, consts, output);
+            const branchCondition = resolveCondition(
+              rawCondition,
+              defines,
+              consts,
+              activeDefinedSymbols,
+              output
+            );
             const activeCondition = combineConditions(currentCondition, branchCondition);
 
             conditionalStack.push({
@@ -946,7 +1027,13 @@ export async function collectDefinesAndConsts(
             if (elifMatch && conditionalStack.length > 0) {
               const frame = conditionalStack[conditionalStack.length - 1];
               const rawCondition = elifMatch[1];
-              const branchCondition = resolveCondition(rawCondition, defines, consts, output);
+              const branchCondition = resolveCondition(
+                rawCondition,
+                defines,
+                consts,
+                activeDefinedSymbols,
+                output
+              );
               const previousBranchExclusion = buildElseCondition(frame.branchConditions);
               const localCondition =
                 previousBranchExclusion === "1"
@@ -974,6 +1061,12 @@ export async function collectDefinesAndConsts(
               const frame = conditionalStack.pop();
               currentCondition = frame?.parentCondition ?? null;
               isDirectiveLine = true;
+            } else {
+              const undefMatch = directiveLine.match(UNDEF_RX);
+              if (undefMatch) {
+                activeDefinedSymbols.delete(undefMatch[1]);
+                isDirectiveLine = true;
+              }
             }
           }
         }
@@ -1000,6 +1093,11 @@ export async function collectDefinesAndConsts(
         if (!isActiveBranch) {
           braceDepth = updateBraceDepth(braceDepth, lineWithoutComments);
           continue;
+        }
+
+        const activeDefineName = parseDefineNameDirective(line);
+        if (activeDefineName) {
+          activeDefinedSymbols.add(activeDefineName);
         }
 
         const parsedDefine = parseDefineDirective(line);
@@ -1090,11 +1188,13 @@ export async function collectDefinesAndConsts(
     }
   }
 
+  const dedupedDefineVariants = dedupeDefineVariants(defineVariants);
+
   return {
     defines,
     defineConditions,
     functionDefines,
-    defineVariants,
+    defineVariants: dedupedDefineVariants,
     consts,
     locations
   };

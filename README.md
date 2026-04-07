@@ -1,9 +1,16 @@
 # 🧮 CalcDocs — See What Your Firmware Really Computes
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/convergo-dev.calcdocs-vscode-extension?label=Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
-[![Downloads](https://img.shields.io/visual-studio-marketplace/d/convergo-dev.calcdocs-vscode-extension?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
-[![Rating](https://img.shields.io/visual-studio-marketplace/r/convergo-dev.calcdocs-vscode-extension?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
+[https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-version.png]
+(https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+
+[https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-downloads.png]
+(https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+
+[https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-rating.png]
+(https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+
+[https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/license-mit.png]
+(LICENSE.md)
 
 **Stop guessing what your macros and formulas evaluate to.  
 See real computed values from your C/C++ firmware — instantly, inside VS Code.**
@@ -112,17 +119,6 @@ Works best with:
 
 --- 
 
-# 📚 Full documentation
-
-👉 See full README on GitHub for:
-
-- advanced configuration
-- CSV lookup tables
-- parser details
-- project structure
-
---- 
-
 ## ❤️ Support
 
 If CalcDocs helps you save time or avoid bugs, consider supporting the project:
@@ -132,6 +128,7 @@ If CalcDocs helps you save time or avoid bugs, consider supporting the project:
 
 - 💖 **Sponsor development**  
   [![PayPal](https://img.shields.io/badge/PayPal-Support-blue?logo=paypal&logoColor=white)](https://www.paypal.me/gianmichelepasinelli)
+
 --- 
 
 ## 📚 Documentation

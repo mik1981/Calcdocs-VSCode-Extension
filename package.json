@@ -2,7 +2,7 @@
   "name": "calcdocs-vscode-extension",
   "displayName": "CalcDocs – C/C++ Constants & Formula Evaluator",
   "description": "%extension.description%",
-  "version": "0.1.11",
+  "version":"0.1.12",
   "publisher": "convergo-dev",
   "repository": {
     "type": "git",
@@ -283,7 +283,7 @@
     "vscode:prepublish": "npm run build",
     "package": "vsce package --no-dependencies",
     "compile": "tsc -p .",
-    "test:engine": "npm run compile && node --test --test-isolation=none out/engine/__tests__/units.test.js out/engine/__tests__/yamlEngine.test.js"
+    "test:engine": "npm run compile && node --test --test-isolation=none out/engine/__tests__/units.test.js out/engine/__tests__/yamlEngine.test.js out/core/__tests__/cppParser.test.js"
   },
   "icon": "resources/icon.png",
   "devDependencies": {
