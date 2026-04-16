@@ -1,8 +1,8 @@
 {
   "name": "calcdocs-vscode-extension",
-  "displayName": "CalcDocs – C/C++ Constants & Formula Evaluator",
+  "displayName": "CalcDocs - C/C++ Constants & Formula Evaluator",
   "description": "%extension.description%",
-  "version":"0.1.12",
+  "version": "0.2.0",
   "publisher": "convergo-dev",
   "repository": {
     "type": "git",
@@ -108,6 +108,11 @@
           "default": true,
           "description": "%config.enableCppProviders%"
         },
+        "calcdocs.useClangd": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.useClangd%"
+        },
         "calcdocs.cppDefines": {
           "type": "array",
           "default": [],
@@ -188,6 +193,162 @@
           "minimum": 1,
           "description": "%config.cppCacheMaxEntries%"
         },
+        "calcdocs.ui.invasiveness": {
+          "type": "string",
+          "default": "standard",
+          "enum": [
+            "minimal",
+            "standard",
+            "verbose"
+          ],
+          "enumDescriptions": [
+            "%config.ui.invasiveness.minimal%",
+            "%config.ui.invasiveness.standard%",
+            "%config.ui.invasiveness.verbose%"
+          ],
+          "description": "%config.ui.invasiveness%"
+        },
+        "calcdocs.cpp.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.codeLens.enabled%"
+        },
+        "calcdocs.cpp.codeLens.maxItemsPerFile": {
+          "type": "number",
+          "default": 40,
+          "minimum": 1,
+          "description": "%config.cpp.codeLens.maxItemsPerFile%"
+        },
+        "calcdocs.cpp.codeLens.showAmbiguity": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.codeLens.showAmbiguity%"
+        },
+        "calcdocs.cpp.codeLens.showCastOverflow": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.codeLens.showCastOverflow%"
+        },
+        "calcdocs.cpp.codeLens.showMismatch": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.codeLens.showMismatch%"
+        },
+        "calcdocs.cpp.codeLens.showOpenFormula": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.codeLens.showOpenFormula%"
+        },
+        "calcdocs.cpp.codeLens.showResolvedValue": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.codeLens.showResolvedValue%"
+        },
+        "calcdocs.cpp.codeLens.showExpandedPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.codeLens.showExpandedPreview%"
+        },
+        "calcdocs.cpp.hover.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.hover.enabled%"
+        },
+        "calcdocs.cpp.hover.maxConditionalDefinitions": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "description": "%config.cpp.hover.maxConditionalDefinitions%"
+        },
+        "calcdocs.cpp.hover.maxInDocumentDefinitions": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "description": "%config.cpp.hover.maxInDocumentDefinitions%"
+        },
+        "calcdocs.cpp.hover.showConditionalDefinitions": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.hover.showConditionalDefinitions%"
+        },
+        "calcdocs.cpp.hover.showInDocumentDefinitions": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.hover.showInDocumentDefinitions%"
+        },
+        "calcdocs.cpp.hover.showCastOverflow": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.hover.showCastOverflow%"
+        },
+        "calcdocs.cpp.hover.showInheritedAmbiguity": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.hover.showInheritedAmbiguity%"
+        },
+        "calcdocs.cpp.hover.showFormulaSection": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.hover.showFormulaSection%"
+        },
+        "calcdocs.cpp.hover.showKnownValue": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.cpp.hover.showKnownValue%"
+        },
+        "calcdocs.inline.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inline.codeLens.enabled%"
+        },
+        "calcdocs.inline.codeLens.maxItemsPerFile": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "description": "%config.inline.codeLens.maxItemsPerFile%"
+        },
+        "calcdocs.inline.hover.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inline.hover.enabled%"
+        },
+        "calcdocs.inline.hover.showDimension": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inline.hover.showDimension%"
+        },
+        "calcdocs.inline.hover.showWarnings": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inline.hover.showWarnings%"
+        },
+        "calcdocs.inline.hover.showErrors": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inline.hover.showErrors%"
+        },
+        "calcdocs.inline.ghost.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inline.ghost.enabled%"
+        },
+        "calcdocs.inline.diagnostics.level": {
+          "type": "string",
+          "default": "warnings",
+          "enum": [
+            "off",
+            "errors",
+            "warnings",
+            "info"
+          ],
+          "enumDescriptions": [
+            "%config.inlineCalc.diagnosticsLevel.off%",
+            "%config.inlineCalc.diagnosticsLevel.errors%",
+            "%config.inlineCalc.diagnosticsLevel.warnings%",
+            "%config.inlineCalc.diagnosticsLevel.info%"
+          ],
+          "description": "%config.inline.diagnostics.level%"
+        },
         "calcdocs.inlineCalc.enableCodeLens": {
           "type": "boolean",
           "default": true,
@@ -214,10 +375,32 @@
             "%config.inlineCalc.diagnosticsLevel.info%"
           ],
           "description": "%config.inlineCalc.diagnosticsLevel%"
+        },
+        "calcdocs.hover.enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "calcdocs.hover.minConfidence": {
+          "type": "number",
+          "default": 0.6
+        },
+        "calcdocs.hover.showSource": {
+          "type": "boolean",
+          "default": true
+        },
+        "calcdocs.formulaHeader.outputPath": {
+          "type": "string",
+          "default": "macro_generate.h",
+          "description": "Path for generated C header with formula macros"
         }
       }
     },
     "commands": [
+      {
+        "command": "calcdocs.generateFormulaHeader",
+        "title": "Generate Formulas Header",
+        "icon": "$(file-code)"
+      },
       {
         "command": "calcdocs.forceRefresh",
         "title": "%command.forceRefresh.title%"
@@ -231,6 +414,22 @@
         "title": "%command.toggleEnabled.title%"
       },
       {
+        "command": "calcdocs.toggleGhostValues",
+        "title": "%command.toggleGhostValues.title%"
+      },
+      {
+        "command": "calcdocs.restart",
+        "title": "%command.restart.title%"
+      },
+      {
+        "command": "calcdocs.runtimeMenu",
+        "title": "%command.runtimeMenu.title%"
+      },
+      {
+        "command": "calcdocs.setUiInvasiveness",
+        "title": "%command.setUiInvasiveness.title%"
+      },
+      {
         "command": "calcdocs.showOutput",
         "title": "%command.showOutput.title%"
       },
@@ -241,6 +440,15 @@
       {
         "command": "calcdocs.inlineCalc.openGuide",
         "title": "%command.inlineCalc.openGuide.title%",
+        "icon": "$(question)"
+      },
+      {
+        "command": "calcdocs.formulas.foldAll",
+        "title": "%command.formulas.foldAll%"
+      },
+      {
+        "command": "calcdocs.generateCompileCommands",
+        "title": "%command.generateCompileCommands.title%",
         "icon": "$(question)"
       }
     ],
@@ -258,6 +466,7 @@
         {
           "id": "calcdocs.inlineCalcResults",
           "name": "CalcDocs Inline Results",
+          "icon": "$(path)",
           "when": "workspaceFolderCount > 0"
         }
       ]
@@ -269,6 +478,28 @@
           ".yaml",
           ".yml"
         ]
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "calcdocs.runtimeMenu",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m"
+      },
+      {
+        "command": "calcdocs.forceRefresh",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
+      },
+      {
+        "command": "calcdocs.toggleEnabled",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e"
+      },
+      {
+        "command": "calcdocs.setUiInvasiveness",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i"
       }
     ]
   },
@@ -283,18 +514,35 @@
     "vscode:prepublish": "npm run build",
     "package": "vsce package --no-dependencies",
     "compile": "tsc -p .",
-    "test:engine": "npm run compile && node --test --test-isolation=none out/engine/__tests__/units.test.js out/engine/__tests__/yamlEngine.test.js out/core/__tests__/cppParser.test.js"
+    "test": "ts-node examples/runner/testRunner.ts",
+    "test:run": "vitest run",
+    "compile:verify": "npm run compile && npm run test:run",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "test:watch": "vitest --watch",
+    "test:engine": "npm run compile && npm run test:run -- src/engine/__tests__ src/core/__tests__ src/symbols/__tests__",
+    "build:test": "npm run build && npm run test:run",
+    "watch:test": "concurrently \"npm run watch\" \"npm run test:watch\"",
+    "dev": "npm run watch:test"
   },
   "icon": "resources/icon.png",
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^20.19.33",
+    "@types/node": "^20.19.39",
     "@types/vscode": "^1.109.0",
+    "@vitest/coverage-v8": "^4.1.4",
+    "@vitest/ui": "^4.1.4",
     "@vscode/l10n-dev": "^0.0.35",
+    "concurrently": "^9.1.2",
     "esbuild": "^0.27.3",
-    "typescript": "^5.9.3"
+    "happy-dom": "^20.9.0",
+    "jsdom": "^29.0.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.4"
   },
   "dependencies": {
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "ts-node": "^10.9.2",
+    "vscode-languageclient": "^9.0.1"
   }
 }

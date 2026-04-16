@@ -10,8 +10,8 @@
   "statusBar.clickToDisable": "Clicca per disabilitare CalcDocs",
   "statusBar.clickToEnable": "CalcDocs disabilitato. Clicca per abilitare.",
   "statusBar.enabled": "CalcDocs abilitato.",
-  "statusBar.enabledDetails": "CalcDocs abilitato.\n\nCPU {0}% RAM {1}MB{2}.\nSoglia CPU: {3}%.\n\nClicca per disabilitare.",
-  "statusBar.enabledDegradedDetails": "CalcDocs abilitato.\n\nCPU {0}% RAM {1}MB{2}.\nSoglia CPU: {3}%.\nStack {4}/{5}, riferimento circolare rilevato {6}, rami interrotti dal depth guard {7}.\n\nClicca per disabilitare.",
+  "statusBar.enabledDetails": "CalcDocs abilitato.\n\nCPU {0}% RAM {1}MB{2}.\nSoglia CPU: {3}%.\n\n{4}\n\nClicca per disabilitare.",
+  "statusBar.enabledDegradedDetails": "CalcDocs abilitato.\n\nCPU {0}% RAM {1}MB{2}.\nSoglia CPU: {3}%.\nStack {4}/{5}, riferimento circolare rilevato {6}, rami interrotti dal depth guard {7}.\n\n{8}\n\nClicca per disabilitare.",
   "statusBar.stackUsage": " STK {0}/{1}",
 
   "command.forceRefresh.warningDisabled": "CalcDocs è disabilitato. Riabilitalo dalle impostazioni o tramite 'CalcDocs: Toggle Enabled'.",
@@ -20,9 +20,12 @@
   "command.setScanInterval.invalidInput": "Inserisci un numero ≥ 0",
   "command.toggleEnabled.enabled": "CalcDocs abilitato.",
   "command.toggleEnabled.disabled": "CalcDocs disabilitato.",
+  "command.toggleGhostValues.enabled": "Valori ghost di CalcDocs abilitati.",
+  "command.toggleGhostValues.disabled": "Valori ghost di CalcDocs disabilitati.",
   "command.goToCounterpart.warningDisabled": "CalcDocs è disabilitato. Riabilitalo per usare 'Go to Counterpart'.",
   "command.goToCounterpart.noFormula": "Nessuna formula trovata per '{0}'",
   "command.pickSymbol.placeholder": "Trovate più definizioni per {0}",
+  "command.generateCompileCommands.title": "Genera compile_commands.json per clangd",
 
   "output.activate": "[activate] CalcDocs",
   "output.deactivate": "[deactivate] CalcDocs",

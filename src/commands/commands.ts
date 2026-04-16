@@ -2,18 +2,23 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 
+import { clearCppParserCache } from "../core/cppParser";
 import { writeBackYaml } from "../core/analysis";
 import { getConfig } from "../core/config";
 import { CalcDocsState, SymbolDefinitionLocation } from "../core/state";
 import { AnalysisScheduler } from "../infra/watchers";
 import { pickWord } from "../utils/editor";
 import { localize } from "../utils/localize";
+import { generateCompileCommands, writeCompileCommandsToFile, Configuration } from "../utils/generate-compile-commands";
+import { generateFormulaHeader } from "../utils/headerGenerator";
+import type { FormulaRegistry } from "../formulaOutline/formulaRegistry";
 
 type RegisterCommandsParams = {
   context: vscode.ExtensionContext;
   state: CalcDocsState;
   scheduler: AnalysisScheduler;
   runAnalysisAndRefreshUi: () => Promise<void>;
+  formulaRegistry: FormulaRegistry;
 };
 
 /**
@@ -25,6 +30,7 @@ export function registerCommands({
   state,
   scheduler,
   runAnalysisAndRefreshUi,
+  formulaRegistry,
 }: RegisterCommandsParams): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("calcdocs.forceRefresh", async () => {
@@ -42,6 +48,16 @@ export function registerCommands({
       }
 
       await vscode.window.showInformationMessage("CalcDocs updated.");
+    }),
+
+    vscode.commands.registerCommand("calcdocs.generateFormulaHeader", async () => {
+      const formulas = await formulaRegistry.getAllFormulas();
+      if (formulas.length === 0) {
+        vscode.window.showWarningMessage("No formulas*.yaml found or parsed.");
+        return;
+      }
+      const outputPath = (getConfig() as any).formulaHeader?.outputPath || 'macro_generate.h';
+      await generateFormulaHeader(formulas, outputPath, state);
     }),
 
     vscode.commands.registerCommand("calcdocs.showOutput", async () => {
@@ -87,6 +103,34 @@ export function registerCommands({
       await vscode.window.showInformationMessage(stateLabel);
     }),
 
+    vscode.commands.registerCommand("calcdocs.toggleGhostValues", async () => {
+      const config = getConfig();
+      const nextEnabled = !config.inlineGhostEnable;
+
+      await vscode.workspace
+        .getConfiguration("calcdocs")
+        .update("inline.ghost.enabled", nextEnabled, vscode.ConfigurationTarget.Workspace);
+
+      const stateLabel = nextEnabled
+        ? localize("command.toggleGhostValues.enabled")
+        : localize("command.toggleGhostValues.disabled");
+      await vscode.window.showInformationMessage(stateLabel);
+    }),
+
+    vscode.commands.registerCommand("calcdocs.restart", async () => {
+      clearCppParserCache();
+      await runAnalysisAndRefreshUi();
+      await vscode.window.showInformationMessage(localize("command.restart.done"));
+    }),
+
+    vscode.commands.registerCommand("calcdocs.setUiInvasiveness", async () => {
+      await promptAndSetUiInvasiveness();
+    }),
+
+    vscode.commands.registerCommand("calcdocs.runtimeMenu", async () => {
+      await openRuntimeQuickMenu(runAnalysisAndRefreshUi);
+    }),
+
     vscode.commands.registerCommand("calcdocs.goToCounterpart", async () => {
       if (!state.enabled) {
         await vscode.window.showWarningMessage(
@@ -120,81 +164,357 @@ export function registerCommands({
       await openInlineCalcGuide(context);
     }),
 
-    vscode.commands.registerCommand("calcdocs.openTestFolder", async () => {
-      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      let testFolderUri: vscode.Uri | undefined;
-      let testFileUri: vscode.Uri | undefined;
+     vscode.commands.registerCommand("calcdocs.openTestFolder", async () => {
+       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+       let testFolderUri: vscode.Uri | undefined;
+       let testFileUri: vscode.Uri | undefined;
 
-      // Determine test folder location (workspace or extension)
-      if (workspaceRoot) {
-        const workspaceTestFolder = vscode.Uri.file(path.join(workspaceRoot, "test"));
-        const workspaceTestFile = vscode.Uri.file(path.join(workspaceRoot, "test", "src", "test.c"));
-        try {
-          await fsp.access(workspaceTestFolder.fsPath);
-          testFolderUri = workspaceTestFolder;
-          try {
-            await fsp.access(workspaceTestFile.fsPath);
-            testFileUri = workspaceTestFile;
-          } catch {
-            // test.c not found in workspace, will try extension
-          }
-        } catch {
-          // test folder not in workspace
-        }
-      }
+       // Determine test folder location (workspace or extension)
+       if (workspaceRoot) {
+         const workspaceTestFolder = vscode.Uri.file(path.join(workspaceRoot, "test"));
+         const workspaceTestFile = vscode.Uri.file(path.join(workspaceRoot, "test", "src", "test.c"));
+         try {
+           await fsp.access(workspaceTestFolder.fsPath);
+           testFolderUri = workspaceTestFolder;
+           try {
+             await fsp.access(workspaceTestFile.fsPath);
+             testFileUri = workspaceTestFile;
+           } catch {
+             // test.c not found in workspace, will try extension
+           }
+         } catch {
+           // test folder not in workspace
+         }
+       }
 
-      // Fallback to extension test folder
-      if (!testFolderUri) {
-        const extensionTestFolder = vscode.Uri.joinPath(context.extensionUri, "test");
-        const extensionTestFile = vscode.Uri.joinPath(context.extensionUri, "test", "src", "test.c");
-        try {
-          await fsp.access(extensionTestFolder.fsPath);
-          testFolderUri = extensionTestFolder;
-          try {
-            await fsp.access(extensionTestFile.fsPath);
-            testFileUri = extensionTestFile;
-          } catch {
-            // test.c not found in extension
-          }
-        } catch {
-          // test folder not found in extension
-        }
-      }
+       // Fallback to extension test folder
+       if (!testFolderUri) {
+         const extensionTestFolder = vscode.Uri.joinPath(context.extensionUri, "test");
+         const extensionTestFile = vscode.Uri.joinPath(context.extensionUri, "test", "src", "test.c");
+         try {
+           await fsp.access(extensionTestFolder.fsPath);
+           testFolderUri = extensionTestFolder;
+           try {
+             await fsp.access(extensionTestFile.fsPath);
+             testFileUri = extensionTestFile;
+           } catch {
+             // test.c not found in extension
+           }
+         } catch {
+           // test folder not found in extension
+         }
+       }
 
-      if (!testFolderUri) {
-        await vscode.window.showWarningMessage(
-          "CalcDocs test folder not found."
-        );
-        return;
-      }
+       if (!testFolderUri) {
+         await vscode.window.showWarningMessage(
+           "CalcDocs test folder not found."
+         );
+         return;
+       }
 
-      // Check if test folder is already a workspace folder
-      const existingFolder = vscode.workspace.workspaceFolders?.find(
-        folder => folder.uri.fsPath === testFolderUri!.fsPath
-      );
+       // Check if test folder is already a workspace folder
+       const existingFolder = vscode.workspace.workspaceFolders?.find(
+         folder => folder.uri.fsPath === testFolderUri!.fsPath
+       );
 
-      if (!existingFolder) {
-        // Add test folder as a workspace folder
-        const success = vscode.workspace.updateWorkspaceFolders(
-          vscode.workspace.workspaceFolders?.length ?? 0,
-          0,
-          { uri: testFolderUri, name: "CalcDocs Test" }
-        );
+       if (!existingFolder) {
+         // Add test folder as a workspace folder
+         const success = vscode.workspace.updateWorkspaceFolders(
+           vscode.workspace.workspaceFolders?.length ?? 0,
+           0,
+           { uri: testFolderUri, name: "CalcDocs Test" }
+         );
 
-        if (!success) {
-          await vscode.window.showWarningMessage(
-            "Failed to add test folder to workspace."
+         if (!success) {
+           await vscode.window.showWarningMessage(
+             "Failed to add test folder to workspace."
+           );
+           return;
+         }
+       }
+
+       // Open test.c if available
+       if (testFileUri) {
+         const document = await vscode.workspace.openTextDocument(testFileUri);
+         await vscode.window.showTextDocument(document, { preview: false });
+       }
+     }),
+
+     vscode.commands.registerCommand("calcdocs.generateCompileCommands", async () => {
+       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+       
+       if (!workspaceRoot) {
+         await vscode.window.showWarningMessage("No workspace folder open.");
+         return;
+       }
+
+// No vscode-clangd extension required - internal client auto-reloads compile_commands.json
+
+       await vscode.window.withProgress({
+         location: vscode.ProgressLocation.Notification,
+         title: "Generating compile_commands.json",
+         cancellable: false
+       }, async (progress) => {
+           // 1. Fase di scansione
+           progress.report({ message: "Scanning project files..." });
+
+          const extensionConfig = getConfig();
+          const genConfig: Configuration = {
+            projectRoot: workspaceRoot,
+            pathMode: "relative",
+            exclusions: [
+              ...extensionConfig.ignoredDirs,
+              ".git",
+              "build",
+              "dist",
+              "node_modules",
+              "Tools",
+              "Bitmap/_Old"
+            ],
+            compileFlags: [
+              "-std=c99"
+            ]
+          };
+
+          const result = generateCompileCommands(genConfig);
+
+           // 2. Fase di indicizzazione
+           progress.report({ message: "Indexing source and header files..." });
+
+           // 3. Fase di scrittura
+           progress.report({ message: "Writing compile_commands.json..." });
+           const outputPath = path.join(workspaceRoot, "compile_commands.json");
+           writeCompileCommandsToFile(result, outputPath);
+       
+           // La progress bar si chiude qui automaticamente alla fine della callback
+
+          //  progress.report({ message: "Complete!" });
+
+          //  await vscode.window.showInformationMessage(
+          //    `✅ compile_commands.json generated successfully!\n` +
+          //    `${result.processedFiles} C files processed, ${result.includeDirectories} include directories found`
+          //  );
+         });
+        // 4. Notifica finale persistente (fuori dal blocco withProgress)
+        vscode.window.showInformationMessage(
+            `✅ compile_commands.json generated successfully!`
           );
+     })
+  );
+
+  async function openRuntimeQuickMenu(
+    refresh: () => Promise<void>
+  ): Promise<void> {
+    const config = getConfig();
+    const picks: Array<
+      vscode.QuickPickItem & {
+        action:
+          | "forceRefresh"
+          | "restart"
+          | "toggleEnabled"
+          | "setInvasiveness"
+          | "toggleCppCodeLens"
+          | "toggleCppHover"
+          | "toggleInlineCodeLens"
+          | "toggleInlineHover"
+          | "toggleGhostValues"
+          | "showOutput"
+          | "generateCompileCommands"
+          | "generateFormulaHeader"
+          | "openSettings";
+      }
+    > = [
+      {
+        label: "$(refresh) Force Refresh",
+        description: "Full analysis + YAML write-back (Ctrl+Alt+R)",
+        action: "forceRefresh",
+      },
+      {
+        label: "$(sync~spin) Restart CalcDocs",
+        description: "Clear parser cache and rebuild analysis",
+        action: "restart",
+      },
+      {
+        label: config.enabled ? "$(circle-slash) Disable CalcDocs" : "$(play) Enable CalcDocs",
+        description: config.enabled ? "Pause all analysis/providers" : "Resume analysis/providers",
+        action: "toggleEnabled",
+      },
+      {
+        label: "$(symbol-color) UI Invasiveness",
+        description: `Current: ${config.uiInvasiveness}`,
+        action: "setInvasiveness",
+      },
+      {
+        label: config.cppCodeLens.enabled
+          ? "$(eye-closed) Disable C/C++ CodeLens"
+          : "$(eye) Enable C/C++ CodeLens",
+        description: "Quick toggle for C/C++ CodeLens hints",
+        action: "toggleCppCodeLens",
+      },
+      {
+        label: config.cppHover.enabled
+          ? "$(eye-closed) Disable C/C++ Hover"
+          : "$(eye) Enable C/C++ Hover",
+        description: "Quick toggle for C/C++ hover details",
+        action: "toggleCppHover",
+      },
+      {
+        label: config.inlineCodeLens.enabled
+          ? "$(eye-closed) Disable Inline CodeLens"
+          : "$(eye) Enable Inline CodeLens",
+        description: "Quick toggle for inline calc CodeLens",
+        action: "toggleInlineCodeLens",
+      },
+      {
+        label: config.inlineHover.enabled
+          ? "$(eye-closed) Disable Inline Hover"
+          : "$(eye) Enable Inline Hover",
+        description: "Quick toggle for inline calc hover",
+        action: "toggleInlineHover",
+      },
+      {
+        label: config.inlineGhostEnable
+          ? "$(eye-closed) Disable Ghost Values"
+          : "$(eye) Enable Ghost Values",
+        description: "Quick toggle for ghost value usage and inline rendering",
+        action: "toggleGhostValues",
+      },
+      {
+        label: "$(output) Show CalcDocs Output",
+        description: "Open extension output channel",
+        action: "showOutput",
+      },
+      {
+        label: "$(settings-gear) Open CalcDocs Settings",
+        description: "Open settings filtered by @ext:convergo-dev.calcdocs-vscode-extension",
+        action: "openSettings",
+      },
+    ];
+
+    // Aggiungi comando compile_commands solo se c'è workspace aperto e clangd è presente
+    const hasWorkspace = !!vscode.workspace.workspaceFolders?.[0];
+    // Show if workspace open (internal clangd handles reload - no extension needed)
+    if (hasWorkspace) {
+      picks.push({
+        label: "$(file-code) Generate compile_commands.json",
+        description: "Scan project and create automatically clangd configuration file (internal client auto-reloads)",
+        action: "generateCompileCommands",
+      });
+      picks.push({
+        label: "$(file-code) Generate Formulas Header",
+        description: `C macros to "${getConfig().formulaHeader.outputPath || 'macro_generate.h'}"`,
+        action: "generateFormulaHeader",
+      });
+    }
+
+    const picked = await vscode.window.showQuickPick(picks, {
+      placeHolder: localize("command.runtimeMenu.placeholder"),
+    });
+    if (!picked) {
+      return;
+    }
+
+    switch (picked.action) {
+      case "forceRefresh":
+        await vscode.commands.executeCommand("calcdocs.forceRefresh");
+        return;
+      case "restart":
+        clearCppParserCache();
+        await refresh();
+        await vscode.window.showInformationMessage(localize("command.restart.done"));
+        return;
+      case "generateFormulaHeader":
+        const formulas = await formulaRegistry.getAllFormulas();
+        if (formulas.length === 0) {
+          vscode.window.showWarningMessage("No formulas*.yaml found or parsed.");
           return;
         }
-      }
+        const outputPath = getConfig().formulaHeader?.outputPath || 'macro_generate.h';
+        await generateFormulaHeader(formulas.flat(), outputPath, state);
+        return;
+      case "toggleEnabled":
+        await toggleWorkspaceBoolean("enabled", config.enabled);
+        return;
+      case "setInvasiveness":
+        await promptAndSetUiInvasiveness();
+        return;
+      case "toggleCppCodeLens":
+        await toggleWorkspaceBoolean("cpp.codeLens.enabled", config.cppCodeLens.enabled);
+        return;
+      case "toggleCppHover":
+        await toggleWorkspaceBoolean("cpp.hover.enabled", config.cppHover.enabled);
+        return;
+      case "toggleInlineCodeLens":
+        await toggleWorkspaceBoolean("inline.codeLens.enabled", config.inlineCodeLens.enabled);
+        return;
+      case "toggleInlineHover":
+        await toggleWorkspaceBoolean("inline.hover.enabled", config.inlineHover.enabled);
+        return;
+      case "toggleGhostValues":
+        await vscode.commands.executeCommand("calcdocs.toggleGhostValues");
+        return;
+      case "showOutput":
+        state.output.show(false);
+        return;
+      case "openSettings":
+        await vscode.commands.executeCommand(
+          "workbench.action.openSettings",
+          "@ext:convergo-dev.calcdocs-vscode-extension"
+        );
+        return;
 
-      // Open test.c if available
-      if (testFileUri) {
-        const document = await vscode.workspace.openTextDocument(testFileUri);
-        await vscode.window.showTextDocument(document, { preview: false });
-      }
-    })
+      case "generateCompileCommands":
+        await vscode.commands.executeCommand("calcdocs.generateCompileCommands");
+        return;
+    }
+  }
+}
+
+async function toggleWorkspaceBoolean(
+  settingKey: string,
+  fallbackValue: boolean
+): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration("calcdocs");
+  const currentValue = cfg.get<boolean>(settingKey, fallbackValue);
+  await cfg.update(settingKey, !currentValue, vscode.ConfigurationTarget.Workspace);
+}
+
+async function promptAndSetUiInvasiveness(): Promise<void> {
+  const current = getConfig().uiInvasiveness;
+  const picks: Array<
+    vscode.QuickPickItem & {
+      value: "minimal" | "standard" | "verbose";
+    }
+  > = [
+    {
+      label: "Minimal",
+      description: "Less visual noise, fewer hints",
+      value: "minimal",
+    },
+    {
+      label: "Standard",
+      description: "Balanced details (default)",
+      value: "standard",
+    },
+    {
+      label: "Verbose",
+      description: "Maximum details and hints",
+      value: "verbose",
+    },
+  ];
+
+  const selected = await vscode.window.showQuickPick(picks, {
+    placeHolder: `Current UI invasiveness: ${current}`,
+  });
+  if (!selected) {
+    return;
+  }
+
+  await vscode.workspace
+    .getConfiguration("calcdocs")
+    .update("ui.invasiveness", selected.value, vscode.ConfigurationTarget.Workspace);
+  await vscode.window.showInformationMessage(
+    localize("command.setUiInvasiveness.updated", selected.label)
   );
 }
 

@@ -11,8 +11,9 @@ export type DocumentSymbolDefinition = {
 };
 
 /**
- * Collects top-level C/C++ declarations parsed by parseCppSymbolDefinition.
- * #define directives are always parsed regardless of brace depth.
+ * Collects C/C++ declarations parsed by parseCppSymbolDefinition.
+ * Supports both top-level and local declarations to drive inline ghost values.
+ * #define directives are parsed regardless of brace depth.
  * Multi-line #define directives using trailing "\" are merged into one
  * logical line before parsing.
  */
@@ -34,10 +35,7 @@ export function collectDocumentSymbolDefinitions(
     }
 
     const isDefineLine = DEFINE_DIRECTIVE_RX.test(lineText);
-    const canParseDeclaration = braceDepth === 0 || isDefineLine;
-    const parsed = canParseDeclaration
-      ? parseCppSymbolDefinition(lineText)
-      : undefined;
+    const parsed = parseCppSymbolDefinition(lineText);
 
     if (parsed) {
       definitions.push({

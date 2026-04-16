@@ -11,4 +11,4 @@
   #define K_HEX_ENABLE_2 0
 #endif
 
-#define MUL     8
+// #define MUL     8

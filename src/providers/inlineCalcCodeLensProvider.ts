@@ -14,7 +14,22 @@ function clampText(text: string, max: number): string {
   return `${text.slice(0, max - 3)}...`;
 }
 
-function buildCodeLensTitle(result: InlineCalcResult): string {
+function buildCodeLensTitle(result: InlineCalcResult, state: CalcDocsState): string {
+  if (state.uiInvasiveness === "minimal") {
+    if (result.severity === "error") {
+      return clampText(`CalcDocs: ERROR (${result.error ?? "unresolved"})`, CODELENS_MAX_TITLE_LEN);
+    }
+
+    if (result.severity === "warning") {
+      return clampText(
+        `CalcDocs: WARNING (${result.warnings[0] ?? "dimension warning"})`,
+        CODELENS_MAX_TITLE_LEN
+      );
+    }
+
+    return clampText(`CalcDocs: ${result.displayValue}`, CODELENS_MAX_TITLE_LEN);
+  }
+
   const sourcePreview = clampText(result.source, CODELENS_SOURCE_PREVIEW_LEN);
 
   if (result.severity === "error") {
@@ -32,10 +47,9 @@ function buildCodeLensTitle(result: InlineCalcResult): string {
     );
   }
 
-  return clampText(
-    `CalcDocs: ${sourcePreview} -> ${result.displayValue}`,
-    CODELENS_MAX_TITLE_LEN
-  );
+  const verboseSuffix =
+    state.uiInvasiveness === "verbose" ? ` [${result.dimensionText}]` : "";
+  return clampText(`CalcDocs: ${sourcePreview} -> ${result.displayValue}${verboseSuffix}`, CODELENS_MAX_TITLE_LEN);
 }
 
 /**
@@ -55,19 +69,31 @@ export class InlineCalcCodeLensProvider implements vscode.CodeLensProvider {
   }
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
-    if (!this.state.enabled || !this.state.inlineCalcEnableCodeLens) {
+    if (!this.state.enabled || !this.state.inlineCodeLens.enabled) {
       return [];
     }
 
+    const maxItemsPerFile = Math.max(1, this.state.inlineCodeLens.maxItemsPerFile);
     const results = evaluateInlineCalcs(document.getText(), this.state, {
       includeAssignments: false,
     }, document.languageId);
     const lenses: vscode.CodeLens[] = [];
 
     for (const result of results) {
+      if (lenses.length >= maxItemsPerFile) {
+        break;
+      }
+
+      // Skip if ghost takes priority on this line
+      if (this.state.inlineGhostEnabled && 
+          result.line >= 0 && result.line < document.lineCount &&
+          require("../core/ghostPolicy").shouldRenderGhost(document, result.line, this.state)) {
+        continue;
+      }
+
       lenses.push(
         new vscode.CodeLens(new vscode.Range(result.line, 0, result.line, 0), {
-          title: buildCodeLensTitle(result),
+          title: buildCodeLensTitle(result, this.state),
           command: "",
         })
       );

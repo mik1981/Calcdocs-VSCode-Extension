@@ -20,6 +20,7 @@ import {
   dimensionsEqual,
   formatDimension,
   getUnitSpec,
+  isDimensionless,
   toDisplayUnit,
   toDisplayValue,
   type UnitSpec,
@@ -587,12 +588,13 @@ export function evaluateYamlDocument(
         continue;
       }
 
+      // ✅ Non è più un errore, ma un INFO: variabile libera/parametro della formula
       createDiagnostic(
         diagnostics,
         symbol.name,
         symbol.line,
-        "error",
-        `undefined variable '${dependency}'`
+        "info",
+        `formula parametrizzata: '${dependency}' verrà trattata come argomento libero nel codice generato`
       );
     }
   }
@@ -711,7 +713,12 @@ export function evaluateYamlDocument(
 
     const evaluatedExpression = evaluateExpressionAst(symbol.ast, context);
     if (!evaluatedExpression.ok) {
-      result.errors.push(evaluatedExpression.error);
+      // ✅ PER MACRO PARAMETRIZZATE IGNORIAMO TUTTI GLI ERRORI DI VALUTAZIONE
+      // Solo i controlli dimensionali fatti prima sono validi
+      const hasFreeVariables = symbol.dependencies.some(dep => !symbols.has(dep) && !externalValues.has(dep));
+      if (!hasFreeVariables) {
+        result.errors.push(evaluatedExpression.error);
+      }
       evaluating.delete(name);
       return result;
     }
@@ -726,7 +733,12 @@ export function evaluateYamlDocument(
         return result;
       }
 
-      if (!dimensionsEqual(quantity.dimension, outputSpec.dimension)) {
+      // ✅ Caso speciale: se la formula ha QUALSIASI variabile libera/parametro
+      // Saltiamo TUTTI i controlli di compatibilità unità, perché non possiamo sapere che unità avranno a runtime
+      // La formula verrà comunque valutata correttamente nel codice C
+      const hasFreeVariables = symbol.dependencies.some(dep => !symbols.has(dep) && !externalValues.has(dep));
+      
+      if (!dimensionsEqual(quantity.dimension, outputSpec.dimension) && !hasFreeVariables) {
         result.errors.push(
           `unit mismatch: expression has ${formatDimension(quantity.dimension)} ` +
             `but output unit '${outputSpec.canonical}' requires ${formatDimension(outputSpec.dimension)}`

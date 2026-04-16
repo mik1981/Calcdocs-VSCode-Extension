@@ -964,7 +964,7 @@ async function runYamlAnalysis(
     maxMegaCacheEntries: config.cppCacheMaxEntries,
   };
   if (sourceFiles.some(f => f.includes('test'))) {
-    state.output.appendLine('[Analysis] 🔄 Test files detected - forcing fresh C parse (cache bypassed)');
+    // state.output.appendLine('[Analysis] 🔄 Test files detected - forcing fresh C parse (cache bypassed)');
     collectOpts.clearTestCache = true; // Trigger cache clear in cppParser
   }
   const cppSymbols = await collectDefinesAndConsts(sourceFiles, state.workspaceRoot, collectOpts);

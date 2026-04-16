@@ -20,6 +20,14 @@ export type ResourceStatusMode = "always" | "aboveCpuThreshold";
 export type InlineCalcDiagnosticsLevel = "off" | "errors" | "warnings" | "info";
 
 /**
+ * Profilo di invasività UI:
+ * - minimal: meno informazioni visuali, priorità a non disturbare
+ * - standard: comportamento bilanciato (default)
+ * - verbose: massimo dettaglio visivo
+ */
+export type UiInvasivenessLevel = "minimal" | "standard" | "verbose";
+
+/**
  * Opzioni per il separatore delle migliaia nei numeri formattati.
  * - "none": nessun separatore
  * - "space": spazio (standard scientifico)
@@ -29,6 +37,45 @@ export type InlineCalcDiagnosticsLevel = "off" | "errors" | "warnings" | "info";
  * - "narrowNoBreakSpace": narrow no-break space (U+202F)
  */
 export type ThousandsSeparator = "none" | "space" | "dot" | "comma" | "apostrophe" | "narrowNoBreakSpace";
+
+export type CppCodeLensConfig = {
+  enabled: boolean;
+  maxItemsPerFile: number;
+  showAmbiguity: boolean;
+  showCastOverflow: boolean;
+  showMismatch: boolean;
+  showOpenFormula: boolean;
+  showResolvedValue: boolean;
+  showExpandedPreview: boolean;
+};
+
+export type CppHoverConfig = {
+  enabled: boolean;
+  maxConditionalDefinitions: number;
+  maxInDocumentDefinitions: number;
+  showConditionalDefinitions: boolean;
+  showInDocumentDefinitions: boolean;
+  showCastOverflow: boolean;
+  showInheritedAmbiguity: boolean;
+  showFormulaSection: boolean;
+  showKnownValue: boolean;
+};
+
+export type InlineCodeLensConfig = {
+  enabled: boolean;
+  maxItemsPerFile: number;
+};
+
+export type InlineHoverConfig = {
+  enabled: boolean;
+  showDimension: boolean;
+  showWarnings: boolean;
+  showErrors: boolean;
+};
+
+export type InlineDiagnosticsConfig = {
+  level: InlineCalcDiagnosticsLevel;
+};
 
 /**
  * Configurazione dell'estensione CalcDocs.
@@ -53,13 +100,155 @@ export type CalcDocsConfig = {
   internalDebugMode: LogLevel;
   /** Numero massimo di file C/C++ preprocessati mantenuti in cache LRU */
   cppCacheMaxEntries: number;
+  /** Abilita integrazione clangd come backend LSP opzionale */
+  useClangd: boolean;
   /** Abilita/disabilita i CodeLens per inline calc nei commenti */
   inlineCalcEnableCodeLens: boolean;
+  /** Abilita/disabilita i ghost value */
+  inlineGhostEnable: boolean;
   /** Abilita/disabilita l'hover per inline calc nei commenti */
   inlineCalcEnableHover: boolean;
   /** Livello di severità per la diagnostica inline calc */
   inlineCalcDiagnosticsLevel: InlineCalcDiagnosticsLevel;
+  /** Profilo globale di invasività UI */
+  uiInvasiveness: UiInvasivenessLevel;
+  /** Path for generated C header with formula macros */
+  formulaHeader: {
+    outputPath: string;
+  };
+  /** Configurazione CodeLens C/C++ */
+  cppCodeLens: CppCodeLensConfig;
+  /** Configurazione Hover C/C++ */
+  cppHover: CppHoverConfig;
+  /** Configurazione Inline CodeLens */
+  inlineCodeLens: InlineCodeLensConfig;
+  /** Configurazione Inline Hover */
+  inlineHover: InlineHoverConfig;
+  /** Configurazione diagnostica Inline */
+  inlineDiagnostics: InlineDiagnosticsConfig;
 };
+
+type UiProfileDefaults = {
+  cppCodeLens: Omit<CppCodeLensConfig, "enabled">;
+  cppHover: Omit<CppHoverConfig, "enabled">;
+  inlineCodeLens: Omit<InlineCodeLensConfig, "enabled">;
+  inlineHover: Omit<InlineHoverConfig, "enabled">;
+};
+
+const DEFAULT_UI_PROFILE: UiInvasivenessLevel = "standard";
+
+const UI_PROFILE_DEFAULTS: Record<UiInvasivenessLevel, UiProfileDefaults> = {
+  minimal: {
+    cppCodeLens: {
+      maxItemsPerFile: 12,
+      showAmbiguity: true,
+      showCastOverflow: true,
+      showMismatch: true,
+      showOpenFormula: false,
+      showResolvedValue: true,
+      showExpandedPreview: false,
+    },
+    cppHover: {
+      maxConditionalDefinitions: 3,
+      maxInDocumentDefinitions: 3,
+      showConditionalDefinitions: true,
+      showInDocumentDefinitions: false,
+      showCastOverflow: true,
+      showInheritedAmbiguity: true,
+      showFormulaSection: false,
+      showKnownValue: true,
+    },
+    inlineCodeLens: {
+      maxItemsPerFile: 8,
+    },
+    inlineHover: {
+      showDimension: false,
+      showWarnings: true,
+      showErrors: true,
+    },
+  },
+  standard: {
+    cppCodeLens: {
+      maxItemsPerFile: 40,
+      showAmbiguity: true,
+      showCastOverflow: true,
+      showMismatch: true,
+      showOpenFormula: true,
+      showResolvedValue: true,
+      showExpandedPreview: true,
+    },
+    cppHover: {
+      maxConditionalDefinitions: 8,
+      maxInDocumentDefinitions: 6,
+      showConditionalDefinitions: true,
+      showInDocumentDefinitions: true,
+      showCastOverflow: true,
+      showInheritedAmbiguity: true,
+      showFormulaSection: true,
+      showKnownValue: true,
+    },
+    inlineCodeLens: {
+      maxItemsPerFile: 30,
+    },
+    inlineHover: {
+      showDimension: true,
+      showWarnings: true,
+      showErrors: true,
+    },
+  },
+  verbose: {
+    cppCodeLens: {
+      maxItemsPerFile: 150,
+      showAmbiguity: true,
+      showCastOverflow: true,
+      showMismatch: true,
+      showOpenFormula: true,
+      showResolvedValue: true,
+      showExpandedPreview: true,
+    },
+    cppHover: {
+      maxConditionalDefinitions: 20,
+      maxInDocumentDefinitions: 20,
+      showConditionalDefinitions: true,
+      showInDocumentDefinitions: true,
+      showCastOverflow: true,
+      showInheritedAmbiguity: true,
+      showFormulaSection: true,
+      showKnownValue: true,
+    },
+    inlineCodeLens: {
+      maxItemsPerFile: 100,
+    },
+    inlineHover: {
+      showDimension: true,
+      showWarnings: true,
+      showErrors: true,
+    },
+  },
+};
+
+function normalizeUiInvasiveness(value: string | undefined): UiInvasivenessLevel {
+  return value === "minimal" || value === "verbose" || value === "standard"
+    ? value
+    : DEFAULT_UI_PROFILE;
+}
+
+function normalizeInlineDiagnosticsLevel(value: string): InlineCalcDiagnosticsLevel {
+  return value === "off" ||
+    value === "errors" ||
+    value === "warnings" ||
+    value === "info"
+    ? value
+    : "warnings";
+}
+
+function normalizePositiveInt(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
 
 /**
  * Legge le impostazioni dell'estensione da "calcdocs.*" e normalizza i valori di default.
@@ -103,28 +292,149 @@ export function getConfig(): CalcDocsConfig {
   const cppCacheMaxEntries = Number.isFinite(rawCppCacheMaxEntries)
     ? Math.max(1, Math.floor(rawCppCacheMaxEntries))
     : 24;
-  const inlineCalcEnableCodeLens = cfg.get<boolean>(
-    "inlineCalc.enableCodeLens",
-    true
+
+  const uiInvasiveness = normalizeUiInvasiveness(
+    cfg.get<string>("ui.invasiveness", DEFAULT_UI_PROFILE)
   );
-  const inlineCalcEnableHover = cfg.get<boolean>(
-    "inlineCalc.enableHover",
-    true
+  const uiDefaults = UI_PROFILE_DEFAULTS[uiInvasiveness];
+
+  const formulaHeader = {
+    outputPath: cfg.get<string>("formulaHeader.outputPath", "macro_generate.h"),
+  };
+
+  const cppCodeLensEnabled = cfg.get<boolean>("cpp.codeLens.enabled", true);
+  const cppCodeLens: CppCodeLensConfig = {
+    enabled: cppCodeLensEnabled,
+    maxItemsPerFile: normalizePositiveInt(
+      Number(cfg.get<number>("cpp.codeLens.maxItemsPerFile", uiDefaults.cppCodeLens.maxItemsPerFile)),
+      uiDefaults.cppCodeLens.maxItemsPerFile
+    ),
+    showAmbiguity: cfg.get<boolean>(
+      "cpp.codeLens.showAmbiguity",
+      uiDefaults.cppCodeLens.showAmbiguity
+    ),
+    showCastOverflow: cfg.get<boolean>(
+      "cpp.codeLens.showCastOverflow",
+      uiDefaults.cppCodeLens.showCastOverflow
+    ),
+    showMismatch: cfg.get<boolean>(
+      "cpp.codeLens.showMismatch",
+      uiDefaults.cppCodeLens.showMismatch
+    ),
+    showOpenFormula: cfg.get<boolean>(
+      "cpp.codeLens.showOpenFormula",
+      uiDefaults.cppCodeLens.showOpenFormula
+    ),
+    showResolvedValue: cfg.get<boolean>(
+      "cpp.codeLens.showResolvedValue",
+      uiDefaults.cppCodeLens.showResolvedValue
+    ),
+    showExpandedPreview: cfg.get<boolean>(
+      "cpp.codeLens.showExpandedPreview",
+      uiDefaults.cppCodeLens.showExpandedPreview
+    ),
+  };
+
+  const cppHoverEnabled = cfg.get<boolean>("cpp.hover.enabled", true);
+  const cppHover: CppHoverConfig = {
+    enabled: cppHoverEnabled,
+    maxConditionalDefinitions: normalizePositiveInt(
+      Number(
+        cfg.get<number>(
+          "cpp.hover.maxConditionalDefinitions",
+          uiDefaults.cppHover.maxConditionalDefinitions
+        )
+      ),
+      uiDefaults.cppHover.maxConditionalDefinitions
+    ),
+    maxInDocumentDefinitions: normalizePositiveInt(
+      Number(
+        cfg.get<number>(
+          "cpp.hover.maxInDocumentDefinitions",
+          uiDefaults.cppHover.maxInDocumentDefinitions
+        )
+      ),
+      uiDefaults.cppHover.maxInDocumentDefinitions
+    ),
+    showConditionalDefinitions: cfg.get<boolean>(
+      "cpp.hover.showConditionalDefinitions",
+      uiDefaults.cppHover.showConditionalDefinitions
+    ),
+    showInDocumentDefinitions: cfg.get<boolean>(
+      "cpp.hover.showInDocumentDefinitions",
+      uiDefaults.cppHover.showInDocumentDefinitions
+    ),
+    showCastOverflow: cfg.get<boolean>(
+      "cpp.hover.showCastOverflow",
+      uiDefaults.cppHover.showCastOverflow
+    ),
+    showInheritedAmbiguity: cfg.get<boolean>(
+      "cpp.hover.showInheritedAmbiguity",
+      uiDefaults.cppHover.showInheritedAmbiguity
+    ),
+    showFormulaSection: cfg.get<boolean>(
+      "cpp.hover.showFormulaSection",
+      uiDefaults.cppHover.showFormulaSection
+    ),
+    showKnownValue: cfg.get<boolean>(
+      "cpp.hover.showKnownValue",
+      uiDefaults.cppHover.showKnownValue
+    ),
+  };
+
+  const inlineCodeLensEnabled = cfg.get<boolean>(
+    "inline.codeLens.enabled",
+    cfg.get<boolean>("inlineCalc.enableCodeLens", true)
   );
-  const inlineCalcDiagnosticsLevelValue = cfg.get<string>(
-    "inlineCalc.diagnosticsLevel",
-    "warnings"
+  const inlineCodeLens: InlineCodeLensConfig = {
+    enabled: inlineCodeLensEnabled,
+    maxItemsPerFile: normalizePositiveInt(
+      Number(
+        cfg.get<number>(
+          "inline.codeLens.maxItemsPerFile",
+          uiDefaults.inlineCodeLens.maxItemsPerFile
+        )
+      ),
+      uiDefaults.inlineCodeLens.maxItemsPerFile
+    ),
+  };
+
+  const inlineHoverEnabled = cfg.get<boolean>(
+    "inline.hover.enabled",
+    cfg.get<boolean>("inlineCalc.enableHover", true)
   );
-  const inlineCalcDiagnosticsLevel: InlineCalcDiagnosticsLevel =
-    inlineCalcDiagnosticsLevelValue === "off" ||
-    inlineCalcDiagnosticsLevelValue === "errors" ||
-    inlineCalcDiagnosticsLevelValue === "warnings" ||
-    inlineCalcDiagnosticsLevelValue === "info"
-      ? inlineCalcDiagnosticsLevelValue
-      : "warnings";
-    // ["none", "space", "dot", "comma", "apostrophe", "narrowNoBreakSpace"].includes(internalDebugModeValue)
-    //   ? internalDebugModeValue as LogLevel
-    //   : "";
+  const inlineHover: InlineHoverConfig = {
+    enabled: inlineHoverEnabled,
+    showDimension: cfg.get<boolean>(
+      "inline.hover.showDimension",
+      uiDefaults.inlineHover.showDimension
+    ),
+    showWarnings: cfg.get<boolean>(
+      "inline.hover.showWarnings",
+      uiDefaults.inlineHover.showWarnings
+    ),
+    showErrors: cfg.get<boolean>(
+      "inline.hover.showErrors",
+      uiDefaults.inlineHover.showErrors
+    ),
+  };
+
+  const inlineDiagnosticsLevelValue = cfg.get<string>(
+    "inline.diagnostics.level",
+    cfg.get<string>("inlineCalc.diagnosticsLevel", "warnings")
+  );
+  const inlineDiagnostics: InlineDiagnosticsConfig = {
+    level: normalizeInlineDiagnosticsLevel(inlineDiagnosticsLevelValue),
+  };
+
+  // Backward-compatible aliases consumed by existing code paths.
+  const inlineGhostEnable = cfg.get<boolean>(
+    "inline.ghost.enabled",
+    cfg.get<boolean>("inlineGhostEnabled", true)
+  );
+  const inlineCalcEnableCodeLens = inlineCodeLens.enabled;
+  const inlineCalcEnableHover = inlineHover.enabled;
+  const inlineCalcDiagnosticsLevel = inlineDiagnostics.level;
 
   return {
     enabled: cfg.get<boolean>("enabled", true),
@@ -137,9 +447,18 @@ export function getConfig(): CalcDocsConfig {
     thousandsSeparator,
     internalDebugMode,
     cppCacheMaxEntries,
+    useClangd: cfg.get<boolean>("useClangd", true),
+    inlineGhostEnable,
     inlineCalcEnableCodeLens,
     inlineCalcEnableHover,
     inlineCalcDiagnosticsLevel,
+    uiInvasiveness,
+    formulaHeader,
+    cppCodeLens,
+    cppHover,
+    inlineCodeLens,
+    inlineHover,
+    inlineDiagnostics,
   };
 }
 

@@ -1,42 +1,43 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { describe, expect, it } from "vitest";
 
 import { addQuantities, applyOutputUnit, createQuantity } from "../units";
 
-test("unit system converts compatible pressure units", () => {
-  const pa = createQuantity(100, "Pa");
-  const atm = createQuantity(1, "atm");
-  assert.equal(pa.ok, true);
-  assert.equal(atm.ok, true);
-  if (!pa.ok || !atm.ok) {
-    return;
-  }
+describe("units", () => {
+  it("converts compatible pressure units", () => {
+    const pa = createQuantity(100, "Pa");
+    const atm = createQuantity(1, "atm");
+    expect(pa.ok).toBe(true);
+    expect(atm.ok).toBe(true);
+    if (!pa.ok || !atm.ok) {
+      return;
+    }
 
-  const sum = addQuantities(pa.value, atm.value);
-  assert.equal(sum.ok, true);
-  if (!sum.ok) {
-    return;
-  }
+    const sum = addQuantities(pa.value, atm.value);
+    expect(sum.ok).toBe(true);
+    if (!sum.ok) {
+      return;
+    }
 
-  const converted = applyOutputUnit(sum.value, "Pa");
-  assert.equal(converted.ok, true);
-  if (!converted.ok) {
-    return;
-  }
+    const converted = applyOutputUnit(sum.value, "Pa");
+    expect(converted.ok).toBe(true);
+    if (!converted.ok) {
+      return;
+    }
 
-  assert.ok(Math.abs(converted.value.displayValue - 101425) < 1e-9);
-});
+    expect(converted.value.displayValue).toBeCloseTo(101425, 9);
+  });
 
-test("unit system rejects incompatible add/sub operations", () => {
-  const resistance = createQuantity(10, "ohm");
-  const voltage = createQuantity(5, "V");
-  assert.equal(resistance.ok, true);
-  assert.equal(voltage.ok, true);
-  if (!resistance.ok || !voltage.ok) {
-    return;
-  }
+  it("rejects incompatible add/sub operations", () => {
+    const resistance = createQuantity(10, "ohm");
+    const voltage = createQuantity(5, "V");
+    expect(resistance.ok).toBe(true);
+    expect(voltage.ok).toBe(true);
+    if (!resistance.ok || !voltage.ok) {
+      return;
+    }
 
-  const sum = addQuantities(resistance.value, voltage.value);
-  assert.equal(sum.ok, false);
+    const sum = addQuantities(resistance.value, voltage.value);
+    expect(sum.ok).toBe(false);
+  });
 });
 

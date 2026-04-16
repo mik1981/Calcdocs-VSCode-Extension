@@ -10,8 +10,8 @@
   "statusBar.clickToDisable": "Click to disable CalcDocs",
   "statusBar.clickToEnable": "CalcDocs disabled. Click to enable.",
   "statusBar.enabled": "CalcDocs enabled.",
-  "statusBar.enabledDetails": "CalcDocs enabled.\n\nCPU {0}% RAM {1}MB{2}.\nCPU threshold: {3}%.\n\nClick to disable.",
-  "statusBar.enabledDegradedDetails": "CalcDocs enabled.\n\nCPU {0}% RAM {1}MB{2}.\nCPU threshold: {3}%.\nStack usage {4}/{5}, circular reference detected {6}, branches stopped by depth guard {7}.\n\nClick to disable.",
+  "statusBar.enabledDetails": "CalcDocs enabled.\n\nCPU {0}% RAM {1}MB{2}.\nCPU threshold: {3}%.\n\n{4}\n\nClick to disable.",
+  "statusBar.enabledDegradedDetails": "CalcDocs enabled.\n\nCPU {0}% RAM {1}MB{2}.\nCPU threshold: {3}%.\nStack usage {4}/{5}, circular reference detected {6}, branches stopped by depth guard {7}.\n\n{8}\n\nClick to disable.",
   "statusBar.stackUsage": " STK {0}/{1}",
 
   "command.forceRefresh.warningDisabled": "CalcDocs is disabled. Re-enable it from settings or with CalcDocs: Toggle Enabled.",
@@ -20,9 +20,12 @@
   "command.setScanInterval.invalidInput": "Insert a number >= 0",
   "command.toggleEnabled.enabled": "CalcDocs enabled.",
   "command.toggleEnabled.disabled": "CalcDocs disabled.",
+  "command.toggleGhostValues.enabled": "CalcDocs ghost values enabled.",
+  "command.toggleGhostValues.disabled": "CalcDocs ghost values disabled.",
   "command.goToCounterpart.warningDisabled": "CalcDocs is disabled. Re-enable it to use Go to Counterpart.",
   "command.goToCounterpart.noFormula": "No formulas entry for '{0}'",
   "command.pickSymbol.placeholder": "Multiple definitions found for {0}",
+  "command.generateCompileCommands.title": "Generate compile_commands.json for clangd",
 
   "output.activate": "[activate] CalcDocs",
   "output.deactivate": "[deactivate] CalcDocs",

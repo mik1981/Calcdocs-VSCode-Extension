@@ -1,10 +1,11 @@
-#include "test.h"
+#include "../inc/test.h"
+#include "../macro_generate.h"
 
 #ifndef __TEST_H
   #error "manca include di test.h
 #endif
 
-#if defined(__TEST_H)
+#if !defined(__TEST_H)
 
 #else
 
@@ -16,10 +17,12 @@
   #define K_HEX_ENABLE 0
 #endif
 
+#define MAX_VEL   (VEL*100)
+
 
 // ==== Valori base ====
-#define MUL     (2<<1)    //  V
-#define VEL     21
+#define MUL     (2<<1)        //  V
+#define USE_VEL VEL
 #define NEG     -5
 
 #if K_HEX_ENABLE
@@ -42,12 +45,15 @@
 // ==== Function-like ====
 #define A(x)    ((x) * 2)
 #define B(y)    A((y) + 1)
+#define C       B(2) + 1
 
 #define PT100_OHM_MIN   ( 58.93 )//ohm
-#define PT100_OHM_MAX   ( 217.16 )//ohm
+#define PT100_OHM_MAX   ( 217.16 )
 #define PT100_TOT_AMPL  ( 0.000974 * 32.44192581 / 5.0 )
 #define PT100_NUM16(R)  (signed int)(0.5 + ( R - PT100_OHM_MIN ) * PT100_TOT_AMPL * 65536.0 )
-#define PT100_100OHM    PT100_NUM16(100)        // hover su RHS function-like
+// hover su RHS function-like
+#define PT100_100OHM    PT100_NUM16(100)
+#define ADC_STD         NTC_ADC(6)
 
 // ==== Commenti, cast, line continuation, operatori ====
 #define CAST_EX     (int)(VEL * 1.53)
@@ -64,12 +70,10 @@ uint8_t Flags; // Flags applicazione
                                    ((uint32_t)0xAF & 0x02)\
                                 )
 
-
-#include "config.c"                              
 // @vin = 13V
 // @r = 4.7kOhm
 // @tensione = @config.vin + 1
-#define RESULT_COMPUTE_MA 2.5    // = @config.vin / @r -> mA 
+#define RESULT_COMPUTE_MA 2.5    // = @config.c.vin / @r -> mA 
 #define RESULT_NO         2.8    // @vin * @r -> mA
 
 // = 25% * 200W -> W
@@ -79,6 +83,8 @@ uint8_t Flags; // Flags applicazione
 // = A + B #calcdocs-ignore-line
 // = BAD_EXPR #calcdocs-ignore-error
 // calcdocs-ignore-line; = @x + 1
+#define REG_E_MOT_INH_POL     0          //  =0 inibisce il canale a 0V, =1 inibisce il canale a Vmot
+#define r(y,z)          (((y & z)/* == 0*/)? (0x01) : (0x00))
 
 #define EvtCnt_IncSat(n)     do {} while(0);
 
@@ -89,6 +95,8 @@ void test_init(void) {
   }
 }
 
+#define RPM 1000
+#define SPEED (RPM * 0.10472)   // sparisci
 
 
 
@@ -98,23 +106,19 @@ void test_init(void) {
 
 // ==== Uso in codice ====
 int main() {
-  int z1 = /*@M5@*/PT100_NUM16(3);     // -23163
+  int z1 = /*@M5@*/PT100_NUM16(3);
   int z2 = /*@M6@*/FINAL;              // 80
   int z3 = /*@M7@*/LAST;               // 160.8
-  int z4 = /*@M8@*/B(4);               // A(5)=10
-  int z5_1 = /*@M9@*/K_1;              // 16
-  int z5_2 = /*@M9@*/K_2;              // 16
+  int z4 = /*@M8@*/B(4);
+  int z5_1 = /*@M9@*/K_1;
+  int z5_2 = /*@M9@*/K_2;
   int z6 = /*@M10@*/NEGUSE;            // -10
-  int z7 = /*@M11@*/CONT_SUM(3,4);     // 7
+  int z7 = /*@M11@*/CONT_SUM(3,4);
   int z8 = /*@M12@*/CAST_EX;           // (int)(10*1.53)=(int)(30.6)
   int z9 = /*@M13@*/COMMENTED;         // 24
-  const char* s = /*@M14@*/STR(HELLO); // opzionale: "HELLO" o preview stringa
-  int xy = /*@M15@*/CAT(1,2);          // opzionale: 12 post-preprocessore
-
-  // Hover su RHS in #define: vogliamo la call, NON il simbolo LHS
-  // Riga di definizione: #define PT100_100OHM PT100_NUM16(100)
-  // Cursor su PT100_NUM16 nella RHS (altra riga per sicurezza)
-  #define RHS_TEST   PT100_NUM16(/*@M16@*/5)
+  const char* s = /*@M14@*/STR(HELLO);
+  int xy = /*@M15@*/CAT(1,2);
+  int adc_st = NTC_ADC(6);
 
   return 0;
 }

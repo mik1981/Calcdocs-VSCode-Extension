@@ -91,7 +91,7 @@ const INLINE_ASSIGN_RX = /^@([A-Za-z_]\w*)\s*=\s*(.+)$/;
 const INLINE_CALC_RX = /^=\s*(.+)$/;
 const OUTPUT_UNIT_ARROW_RX = /^(.*?)(?:->|=>)\s*([A-Za-z0-9_%./*^+-]+)\s*$/;
 const OUTPUT_UNIT_BRACKET_RX = /^(.*)\[\s*([A-Za-z0-9_%./*^+-]+)\s*]\s*$/;
-const VAR_REFERENCE_RX = /@([A-Za-z_]\w*)/g;
+const VAR_REFERENCE_RX = /@([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/g;
 const IDENTIFIER_TOKEN_RX = /[A-Za-z_][A-Za-z0-9_]*/g;
 const IGNORE_DIRECTIVE_RX =
   /(?:^|\s)#?\s*calcdocs-ignore(?:-(error|warning|info))?\b/gi;
@@ -415,6 +415,137 @@ function shouldSuppressByIgnore(
   return ignore.info;
 }
 
+function normalizePathForMatch(value: string): string {
+  return value
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .toLowerCase();
+}
+
+function parseNumericConfigValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (value && typeof value === "object" && "value" in value) {
+    return parseNumericConfigValue((value as { value?: unknown }).value);
+  }
+
+  return null;
+}
+
+function matchesConfigFileHint(relativePath: string, fileHint: string): boolean {
+  const normalizedPath = normalizePathForMatch(relativePath);
+  const normalizedHint = normalizePathForMatch(fileHint);
+  if (!normalizedHint) {
+    return false;
+  }
+
+  const pathParts = normalizedPath.split("/");
+  const fileName = pathParts[pathParts.length - 1] ?? normalizedPath;
+  const extIndex = fileName.lastIndexOf(".");
+  const fileStem =
+    extIndex > 0 ? fileName.slice(0, extIndex) : fileName;
+
+  return (
+    normalizedPath === normalizedHint ||
+    normalizedPath.endsWith(`/${normalizedHint}`) ||
+    fileName === normalizedHint ||
+    fileStem === normalizedHint
+  );
+}
+
+function resolveConfigValueFromFileHint(
+  state: CalcDocsState,
+  fileHint: string,
+  configKey: string
+): number | null {
+  for (const [relativePath, configVars] of state.configVars) {
+    if (!matchesConfigFileHint(relativePath, fileHint)) {
+      continue;
+    }
+
+    if (!configVars.has(configKey)) {
+      continue;
+    }
+
+    const numeric = parseNumericConfigValue(configVars.get(configKey));
+    if (numeric != null) {
+      return numeric;
+    }
+  }
+
+  return null;
+}
+
+function resolveConfigValueFromAnyFile(
+  state: CalcDocsState,
+  configKey: string
+): number | null {
+  for (const configVars of state.configVars.values()) {
+    if (!configVars.has(configKey)) {
+      continue;
+    }
+
+    const numeric = parseNumericConfigValue(configVars.get(configKey));
+    if (numeric != null) {
+      return numeric;
+    }
+  }
+
+  return null;
+}
+
+function resolveConfigReference(
+  state: CalcDocsState,
+  variableName: string
+): number | null {
+  if (!variableName.startsWith("config.")) {
+    return null;
+  }
+
+  const suffix = variableName.slice("config.".length).trim();
+  if (!suffix) {
+    return null;
+  }
+
+  const parts = suffix.split(".").filter((part) => part.length > 0);
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const configKey = parts[parts.length - 1];
+  const fileHints = new Set<string>();
+
+  if (parts.length === 1) {
+    fileHints.add("config");
+  } else {
+    const scopedHint = parts.slice(0, -1).join(".");
+    fileHints.add(`config.${scopedHint}`);
+    fileHints.add(scopedHint);
+  }
+
+  for (const hint of fileHints) {
+    const scopedValue = resolveConfigValueFromFileHint(state, hint, configKey);
+    if (scopedValue != null) {
+      return scopedValue;
+    }
+  }
+
+  // Backward-compatible fallback: @config.<var> scans all parsed config files.
+  if (parts.length === 1) {
+    return resolveConfigValueFromAnyFile(state, configKey);
+  }
+
+  return null;
+}
+
 function resolveVariables(
   expression: string,
   state: CalcDocsState,
@@ -425,19 +556,9 @@ function resolveVariables(
   const replaced = expression.replace(
     VAR_REFERENCE_RX,
     (_: string, variableName: string) => {
-      // Handle @config.portata
-      if (variableName.startsWith('config.')) {
-        const configKey = variableName.slice(7); // 'portata'
-        for (const [configFile, configVars] of state.configVars) {
-          if (configVars.has(configKey)) {
-            const val = configVars.get(configKey);
-            if (typeof val === 'number') {
-              return String(val);
-            }
-          }
-        }
-        missing.add(variableName);
-        return `@${variableName}`;
+      const configValue = resolveConfigReference(state, variableName);
+      if (configValue != null) {
+        return String(configValue);
       }
 
       if (!variables.has(variableName)) {
@@ -478,7 +599,8 @@ function replaceInlineQuantityLiterals(expression: string): string {
 function replaceVariablesForDimension(expression: string): string {
   return expression.replace(
     VAR_REFERENCE_RX,
-    (_: string, variableName: string) => `__VAR_${variableName}`
+    (_: string, variableName: string) =>
+      `__VAR_${variableName.replace(/\./g, "__")}`
   );
 }
 
@@ -1019,25 +1141,31 @@ function isLikelyInlineCalculationExpression(
   state: CalcDocsState,
   knownInlineVariables: Map<string, number>
 ): boolean {
+  // const logPrefix = "[inline]";
   const trimmed = expression.trim();
+
   if (!trimmed) {
+    // state.output.appendLine(`${logPrefix} trimmed=<empty>\n`);
     return false;
   }
 
   if (DECORATIVE_ONLY_RX.test(trimmed)) {
+    // state.output.appendLine(`${logPrefix} trimmed=${trimmed} -> DECORATIVE_ONLY_RX\n`);
     return false;
   }
 
   if (DECORATIVE_EQUALS_RX.test(trimmed)) {
+    // state.output.appendLine(`${logPrefix} trimmed=${trimmed} -> DECORATIVE_EQUALS_RX\n`);
     return false;
   }
 
   if (trimmed.startsWith("==") && !/\d|@/.test(trimmed)) {
+    // state.output.appendLine(`${logPrefix} trimmed=${trimmed} -> startsWith== without digit/@\n`);
     return false;
   }
 
   const hasNumber = /\d/.test(trimmed);
-  const hasAtVariable = /@[A-Za-z_]\w*/.test(trimmed);
+  const hasAtVariable = /@[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/.test(trimmed);
   const hasMathOperator = MATH_OPERATOR_RX.test(trimmed);
   const hasFunctionCall = FUNCTION_CALL_RX.test(trimmed);
   const hasQuantity = hasQuantityLiteralSignal(trimmed);
@@ -1051,6 +1179,9 @@ function isLikelyInlineCalculationExpression(
     );
   });
 
+  if (!hasMathOperator && !hasFunctionCall) {
+    return false;
+  }
   const hasOnlyUnknownWords =
     tokens.length > 0 &&
     !hasNumber &&
@@ -1061,18 +1192,49 @@ function isLikelyInlineCalculationExpression(
     !hasKnownSymbolToken &&
     tokens.every((token) => !isKnownUnitWord(token));
 
+  const nonNumericTextTokens = tokens.filter((t) => !/^\d+$/.test(t));
+
+  // state.output.appendLine(
+  //   [
+  //     `${logPrefix} trimmed=${trimmed}`,
+  //     `hasNumber=${hasNumber}`,
+  //     `hasAtVariable=${hasAtVariable}`,
+  //     `hasMathOperator=${hasMathOperator}`,
+  //     `hasFunctionCall=${hasFunctionCall}`,
+  //     `hasQuantity=${hasQuantity}`,
+  //     `tokens=${JSON.stringify(tokens)}`,
+  //     `hasKnownSymbolToken=${hasKnownSymbolToken}`,
+  //     `hasOnlyUnknownWords=${hasOnlyUnknownWords}`,
+  //     `nonNumericTextTokens=${JSON.stringify(nonNumericTextTokens)}`
+  //   ].join(" | ") + "\n"
+  // );
+
   if (hasOnlyUnknownWords) {
+    // state.output.appendLine(`${logPrefix} trimmed=${trimmed} -> false (hasOnlyUnknownWords)\n`);
     return false;
   }
 
-  return (
+  if (
+    nonNumericTextTokens.length > 4 &&
+    !hasMathOperator &&
+    !hasAtVariable &&
+    !hasFunctionCall &&
+    !hasQuantity
+  ) {
+    // state.output.appendLine(`${logPrefix} trimmed=${trimmed} -> false (too many text tokens)\n`);
+    return false;
+  }
+
+  const result =
     hasNumber ||
     hasAtVariable ||
     hasMathOperator ||
     hasFunctionCall ||
     hasQuantity ||
-    hasKnownSymbolToken
-  );
+    hasKnownSymbolToken;
+
+  // state.output.appendLine(`${logPrefix} trimmed=${trimmed} -> result=${result}\n`);
+  return result;
 }
 
 function buildWarningsForOutputUnit(

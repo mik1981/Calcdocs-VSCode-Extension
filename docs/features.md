@@ -1,58 +1,43 @@
-# ⭐ Features Overview
+# Features
 
----
+## C/C++ Value Intelligence
 
-## Core Capabilities
+- Computed value previews for:
+  - `#define` object-like and function-like macros
+  - global/local declarations with assignments
+  - chained expressions with casts and conditional symbols
+- Ghost values in `.c` files for fast inline reading.
+- Hex + decimal display for integer-friendly workflows.
 
-- Real computed values (compiler-like evaluation)
-- Recursive macro expansion
-- YAML ↔ C/C++ symbol linking
-- Hover previews with full breakdown
-- CodeLens with resolved values
+## Hybrid Provider Integration
 
----
+- `clangd` wrapper with AST request support.
+- IntelliSense wrapper with additive hover behavior.
+- Dynamic fallback to parser mode when external backends are missing.
 
-## Navigation
+## Formula System
 
-- Go to definition across YAML and C/C++
-- Multi-definition support (conditional macros)
+- `formulas.yaml` evaluation with:
+  - dependency ordering
+  - explain steps
+  - mismatch diagnostics vs C/C++ symbols
+  - optional write-back support
 
----
+## Dimensional & Unit Support
 
-## Inline Calculations
+- Compatible unit math checks.
+- Dimensional mismatch diagnostics.
+- Output unit conversion for supported families.
 
-- `// calc:` support in comments
-- Real-time evaluation
-- Hover + CodeLens integration
+## Diagnostics & Navigation
 
----
+- Conditional macro ambiguity detection.
+- Cast overflow detection in hover/CodeLens.
+- Go-to-definition across C/C++ and YAML entries.
 
-## Preprocessor Support
+## Performance
 
-- #ifdef / #ifndef / #if / #elif / #else
-- Conditional definition tracking
-- Ambiguity detection
+- LRU cache for preprocessing-heavy symbol extraction.
+- Incremental analysis scheduling.
+- Resource monitor integration (CPU/RAM).
 
----
-
-## Diagnostics
-
-- Mismatch detection (YAML vs C)
-- Inline calculation diagnostics
-- Circular dependency protection
-
----
-
-## Advanced
-
-- CSV table lookup with interpolation
-- Expression preview engine
-- Macro function expansion
-
----
-
-## Performance & Safety
-
-- Stack depth protection
-- Resource monitoring (CPU/RAM)
-- Incremental analysis

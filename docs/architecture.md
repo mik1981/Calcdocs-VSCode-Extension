@@ -1,59 +1,37 @@
-# 🧠 Architecture Overview
+# Architecture
 
-CalcDocs is structured in modular layers.
+CalcDocs is organized around 3 macro-functional areas.
 
----
+## 1) Symbol Intelligence Layer
 
-## Core Components
+- `clangd` backend wrapper:
+  - Uses hover/definition/document symbols.
+  - Requests real clang AST (`textDocument/ast`) when available.
+- IntelliSense wrapper:
+  - Detects active cpptools integration.
+  - Injects only additional CalcDocs data (no duplicate provider output).
+- Internal parser fallback:
+  - Extracts defines/const/local declarations.
+  - Resolves function-like macros and conditional branches.
 
-### Analysis Engine
-- Scans workspace
-- Builds symbol graph
-- Coordinates evaluation
+## 2) Calculation Layer
 
-### Expression Engine
-- Parses formulas
-- Resolves dependencies
-- Computes numeric results
+- Expression engine for C-style macro expansion and safe evaluation.
+- YAML formula engine with dependency graph, diagnostics, and explain steps.
+- Dimensional/unit engine for consistency checks and output conversion.
+- Realtime inline calculations in comments.
 
-### C/C++ Parser
-- Extracts #define and const
-- Handles macro expansion
-- Tracks conditional compilation
+## 3) Runtime & Delivery Layer
 
-### YAML Parser
-- Reads formula definitions
-- Links symbols to C code
+- LRU cache for expensive preprocessing/mega translation units.
+- Workspace analysis scheduler + file watchers.
+- UI surfaces: ghost values, CodeLens, hover, diagnostics, definition links.
 
----
+## Runtime Decision Flow
 
-## Providers
+1. Discover active external providers (`clangd`, cpptools).
+2. Build hybrid symbols with confidence and field provenance.
+3. Prefer external data when available.
+4. Add CalcDocs-only context via wrappers.
+5. Fall back to internal parser when external providers are unavailable.
 
-- Hover Provider
-- CodeLens Provider
-- Definition Provider
-
----
-
-## Infrastructure
-
-- File watchers
-- Resource monitoring
-- State management
-
----
-
-## Data Flow
-
-1. Scan files  
-2. Build symbol table  
-3. Resolve dependencies  
-4. Evaluate expressions  
-5. Provide UI feedback  
-
----
-
-## Design Goal
-
-👉 Provide **real-time understanding of computed values**  
-without requiring compilation or debugging.

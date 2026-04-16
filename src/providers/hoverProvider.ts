@@ -17,9 +17,6 @@ import { formatNumbersWithThousandsSeparator } from "../utils/nformat";
 import { DEFINE_NAME_RX, FUNCTION_DEFINE_RX, OBJECT_DEFINE_RX } from "../utils/regex";
 import { stripComments } from "../utils/text";
 
-const HOVER_VARIANT_LIMIT = 8;
-const HOVER_IN_DOC_DEFINITION_LIMIT = 6;
-
 type InDocumentSymbolDefinition = {
   expr: string;
   line: number;
@@ -288,13 +285,17 @@ function formatConditionalDefinitionsSection(
   symbol: string,
   state: CalcDocsState
 ): string | null {
+  if (!state.cppHover.showConditionalDefinitions) {
+    return null;
+  }
+
   const variants = state.symbolConditionalDefs.get(symbol);
   if (!variants || variants.length <= 1) {
     return null;
   }
 
   const lines: string[] = ["**Multiple C/C++ definitions:**"];
-  const shown = variants.slice(0, HOVER_VARIANT_LIMIT);
+  const shown = variants.slice(0, state.cppHover.maxConditionalDefinitions);
 
   for (const variant of shown) {
     const location = `${variant.file}:${variant.line + 1}`;
@@ -323,6 +324,10 @@ function formatInDocumentMultipleDefinitionsSection(
   state: CalcDocsState,
   inDocumentDefinitions: InDocumentSymbolDefinition[]
 ): string | null {
+  if (!state.cppHover.showInDocumentDefinitions) {
+    return null;
+  }
+
   const trackedVariants = state.symbolConditionalDefs.get(symbol);
   if (trackedVariants && trackedVariants.length > 1) {
     return null;
@@ -333,7 +338,7 @@ function formatInDocumentMultipleDefinitionsSection(
   }
 
   const lines: string[] = ["**Multiple definitions found in current file:**"];
-  const shown = inDocumentDefinitions.slice(0, HOVER_IN_DOC_DEFINITION_LIMIT);
+  const shown = inDocumentDefinitions.slice(0, state.cppHover.maxInDocumentDefinitions);
   const relativePath = vscode.workspace.asRelativePath(document.uri.fsPath);
 
   for (const definition of shown) {
@@ -351,6 +356,10 @@ function formatInheritedAmbiguitySection(
   symbol: string,
   state: CalcDocsState
 ): string | null {
+  if (!state.cppHover.showInheritedAmbiguity) {
+    return null;
+  }
+
   const roots = state.symbolAmbiguityRoots.get(symbol);
   if (!roots || roots.length === 0) {
     return null;
@@ -383,6 +392,10 @@ function appendFormulaSection(
   state: CalcDocsState,
   sections: string[]
 ): void {
+  if (!state.cppHover.showFormulaSection) {
+    return;
+  }
+
   const formula = state.formulaIndex.get(symbol);
   if (!formula) {
     return;
@@ -461,6 +474,10 @@ function appendKnownValueSection(
   sections: string[],
   inDocumentDefinitions: InDocumentSymbolDefinition[]
 ): void {
+  if (!state.cppHover.showKnownValue) {
+    return;
+  }
+
   if (state.formulaIndex.has(symbol)) {
     return;
   }
@@ -606,13 +623,15 @@ function buildSymbolHoverSections(
     sections.push(inDocumentSection);
   }
 
-  const inDocumentOverflowSection = formatInDocumentOverflowSection(
-    state,
-    document,
-    inDocumentDefinitions
-  );
-  if (inDocumentOverflowSection) {
-    sections.push(inDocumentOverflowSection);
+  if (state.cppHover.showCastOverflow) {
+    const inDocumentOverflowSection = formatInDocumentOverflowSection(
+      state,
+      document,
+      inDocumentDefinitions
+    );
+    if (inDocumentOverflowSection) {
+      sections.push(inDocumentOverflowSection);
+    }
   }
 
   const inheritedAmbiguity = formatInheritedAmbiguitySection(word, state);
@@ -645,8 +664,14 @@ export function registerCppHoverProvider(
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(cppSelectors, {
       provideHover(document, position) {
-        if (!state.enabled) {
-          debugLog(state, "Hover ignored: extension disabled");
+        if (!state.enabled || !state.cppHover.enabled) {
+          debugLog(state, "Hover ignored: disabled by runtime or settings");
+          return undefined;
+        }
+
+        // New priority logic: skip if ghost or codelens takes precedence
+        const { showHover } = require("../core/ghostPolicy").getLineDisplayPriority(document, position.line, state);
+        if (!showHover) {
           return undefined;
         }
 

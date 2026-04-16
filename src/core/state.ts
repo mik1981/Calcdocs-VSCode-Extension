@@ -1,13 +1,22 @@
 import * as vscode from "vscode";
 
 import { type FunctionMacroDefinition } from "./expression";
-import type { InlineCalcDiagnosticsLevel } from "./config";
+import type {
+  CppCodeLensConfig,
+  CppHoverConfig,
+  InlineCalcDiagnosticsLevel,
+  InlineCodeLensConfig,
+  InlineHoverConfig,
+  UiInvasivenessLevel,
+} from "./config";
 import { FormulaEntry } from "../types/FormulaEntry";
 import { type ColoredOutput } from "../utils/output";
 import type {
   MissingYamlSuggestion,
   YamlEvaluationDiagnostic,
 } from "../engine/yamlEngine";
+import { getConfig } from "./config";
+import { OutlineFormula } from "../formulaOutline/formulaParser";
 
 
 /**
@@ -85,6 +94,8 @@ export type CalcDocsState = {
   ignoredDirs: Set<string>;
   /** Mappa delle formule indicizzate: nome formula -> entry completa */
   formulaIndex: Map<string, FormulaEntry>;
+  /** Live outline formulas per documento */
+  formulaOutlines: Map<string, OutlineFormula[]>;
   /** Mappa dei valori numerici risolti dei simboli: nome -> valore */
   symbolValues: Map<string, number>;
   /** Mappa config files → their @config.* vars */
@@ -101,6 +112,8 @@ export type CalcDocsState = {
   defineConditions: Map<string, string>;
   /** Mappa delle macro funzione: nome -> {params, body} */
   functionDefines: Map<string, FunctionMacroDefinition>;
+  /** Header generation config */
+  headerGenConfig: { outputPath: string };
   /** Snapshot delle statistiche di stack dell'ultima analisi */
   lastAnalysisStackUsage: AnalysisStackUsage;
   /** Ultimo errore di parsing YAML; null se il parsing è riuscito */
@@ -117,8 +130,20 @@ export type CalcDocsState = {
   inlineCalcEnableCodeLens: boolean;
   /** True se l'hover inline calc è abilitato */
   inlineCalcEnableHover: boolean;
+  /** True se i ghost value sono abilitati */
+  inlineGhostEnabled: boolean;
   /** Livello di diagnostica inline calc */
   inlineCalcDiagnosticsLevel: InlineCalcDiagnosticsLevel;
+  /** Profilo invasività UI corrente */
+  uiInvasiveness: UiInvasivenessLevel;
+  /** Configurazione runtime CodeLens C/C++ */
+  cppCodeLens: CppCodeLensConfig;
+  /** Configurazione runtime Hover C/C++ */
+  cppHover: CppHoverConfig;
+  /** Configurazione runtime Inline CodeLens */
+  inlineCodeLens: InlineCodeLensConfig;
+  /** Configurazione runtime Inline Hover */
+  inlineHover: InlineHoverConfig;
 };
 
 
@@ -159,6 +184,7 @@ export function createCalcDocsState(
     hasFormulasFile: false,
     ignoredDirs: new Set<string>(),
     formulaIndex: new Map<string, FormulaEntry>(),
+    formulaOutlines: new Map(),
     symbolValues: new Map<string, number>(),
     configVars: new Map<string, FileConfigVars>(),
     symbolDefs: new Map<string, SymbolDefinitionLocation>(),
@@ -167,6 +193,7 @@ export function createCalcDocsState(
     allDefines: new Map<string, string>(),
     defineConditions: new Map<string, string>(),
     functionDefines: new Map<string, FunctionMacroDefinition>(),
+    headerGenConfig: { outputPath: (getConfig() as any).formulaHeader?.outputPath || 'macro_generate.h' },
     lastAnalysisStackUsage: createDefaultAnalysisStackUsage(),
     lastYamlParseError: null,
     diagnostics: undefined,
@@ -175,7 +202,40 @@ export function createCalcDocsState(
     missingYamlSuggestions: [],
     inlineCalcEnableCodeLens: true,
     inlineCalcEnableHover: true,
+    inlineGhostEnabled: true,
     inlineCalcDiagnosticsLevel: "warnings",
+    uiInvasiveness: "standard",
+    cppCodeLens: {
+      enabled: true,
+      maxItemsPerFile: 40,
+      showAmbiguity: true,
+      showCastOverflow: true,
+      showMismatch: true,
+      showOpenFormula: true,
+      showResolvedValue: true,
+      showExpandedPreview: true,
+    },
+    cppHover: {
+      enabled: true,
+      maxConditionalDefinitions: 8,
+      maxInDocumentDefinitions: 6,
+      showConditionalDefinitions: true,
+      showInDocumentDefinitions: true,
+      showCastOverflow: true,
+      showInheritedAmbiguity: true,
+      showFormulaSection: true,
+      showKnownValue: true,
+    },
+    inlineCodeLens: {
+      enabled: true,
+      maxItemsPerFile: 30,
+    },
+    inlineHover: {
+      enabled: true,
+      showDimension: true,
+      showWarnings: true,
+      showErrors: true,
+    },
   };
 }
 

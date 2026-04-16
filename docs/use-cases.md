@@ -76,5 +76,9 @@ YAML formulas:
 - are versioned  
 - are diffable  
 - explain changes clearly  
+- are plain text (no hidden cells, no implicit logic)
+- integrate naturally with version control systems (Git, SVN, Mercurial)
 
-👉 Better than spreadsheets.
+👉 No hidden logic. No mystery calculations.  
+👉 If it changes, you see it. If you see it, you version it.  
+👉 Spreadsheets hide bugs. This doesn’t.

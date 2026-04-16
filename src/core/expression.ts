@@ -57,6 +57,14 @@ type CastOverflowError = Error & {
   castOverflow: CastOverflowInfo;
 };
 
+function isFunctionCallToken(
+  token: string,
+  meta: IdentifierMeta,
+  functionDefines: Map<string, FunctionMacroDefinition>
+): boolean {
+  return meta.nextChar === "(" && functionDefines.has(token);
+}
+
 function toFiniteNumber(value: unknown): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -927,8 +935,68 @@ function splitCallArguments(argText: string): string[] {
   return args;
 }
 
+function normalizeMacroTokenForPaste(value: string): string {
+  return value
+    .trim()
+    .replace(/^\((.*)\)$/s, "$1")
+    .replace(/\s+/g, "");
+}
+
+function stringifyMacroArgument(value: string): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  const escaped = normalized.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+function applyMacroTokenPasting(
+  body: string,
+  rawArguments: Map<string, string>
+): string {
+  const OPERAND_RX = "([A-Za-z_]\\w*|\\d+)";
+  const tokenPasteRx = new RegExp(`${OPERAND_RX}\\s*##\\s*${OPERAND_RX}`, "g");
+
+  let output = body;
+  for (let pass = 0; pass < 8; pass += 1) {
+    let changed = false;
+    output = output.replace(
+      tokenPasteRx,
+      (_full, leftRaw: string, rightRaw: string) => {
+        const left = rawArguments.get(leftRaw) ?? leftRaw;
+        const right = rawArguments.get(rightRaw) ?? rightRaw;
+        changed = true;
+        return `${normalizeMacroTokenForPaste(left)}${normalizeMacroTokenForPaste(right)}`;
+      }
+    );
+
+    if (!changed) {
+      break;
+    }
+  }
+
+  return output;
+}
+
+function applyMacroStringizing(
+  body: string,
+  rawArguments: Map<string, string>
+): string {
+  return body.replace(/(^|[^#])#\s*([A-Za-z_]\w*)/g, (full, prefix: string, name: string) => {
+    if (!rawArguments.has(name)) {
+      return full;
+    }
+
+    return `${prefix}${stringifyMacroArgument(rawArguments.get(name) ?? "")}`;
+  });
+}
+
 function replaceMacroParameter(body: string, parameter: string, value: string): string {
-  return body.replace(new RegExp(`\\b${parameter}\\b`, "g"), value);
+  return replaceIdentifiersOutsideStrings(body, (token) => {
+    if (token === parameter) {
+      return value;
+    }
+
+    return token;
+  });
 }
 
 function formatPreviewNumber(value: number): string {
@@ -1119,7 +1187,7 @@ function expandFunctionLikeMacrosInExpression(
           return String(symbolValues.get(identifier));
         }
 
-        if (RESERVED_IDENTIFIERS.has(identifier) || meta.nextChar === "(") {
+        if (RESERVED_IDENTIFIERS.has(identifier) || isFunctionCallToken(identifier, meta, functionDefines)) {
           return identifier;
         }
 
@@ -1143,12 +1211,24 @@ function expandFunctionLikeMacrosInExpression(
       });
     });
 
-    let expandedBody = macro.body;
+    const rawArgumentMap = new Map<string, string>();
+    const expandedArgumentMap = new Map<string, string>();
     for (let argIndex = 0; argIndex < macro.params.length; argIndex += 1) {
+      const parameterName = macro.params[argIndex];
+      rawArgumentMap.set(parameterName, parsedArgs[argIndex]);
+      expandedArgumentMap.set(parameterName, expandedArgs[argIndex]);
+    }
+
+    let expandedBody = applyMacroTokenPasting(macro.body, rawArgumentMap);
+    expandedBody = applyMacroStringizing(expandedBody, rawArgumentMap);
+
+    for (let argIndex = 0; argIndex < macro.params.length; argIndex += 1) {
+      const parameterName = macro.params[argIndex];
+      const expandedParameterValue = expandedArgumentMap.get(parameterName) ?? "";
       expandedBody = replaceMacroParameter(
         expandedBody,
-        macro.params[argIndex],
-        `(${expandedArgs[argIndex]})`
+        parameterName,
+        `(${expandedParameterValue})`
       );
     }
 
@@ -2053,35 +2133,82 @@ export function buildCompositeExpressionPreview(
       return String(value);
     }
 
-    if (RESERVED_IDENTIFIERS.has(token) || meta.nextChar === "(") {
-      return token;
-    }
-
     return token;
   });
 
   expanded = resolveInlineLookups(expanded, context);
   const evaluableExpanded = expanded;
-  const simplifiedExpanded = simplifyNumericFragments(evaluableExpanded, context);
+  
+  // DEBUG STEPS
+  // console.log("STEP 1 - raw input:", expr);
+  
+  let simplifiedExpanded = simplifyNumericFragments(evaluableExpanded, context);
+  // console.log("STEP 2 - after numeric simplification:", simplifiedExpanded);
+  
+  // DEBUG: Check defines and symbolValues
+  // console.log("DEFINES map size:", allDefines.size);
+  // console.log("SYMBOLVALUES map size:", symbolValues.size);
+  // console.log("RESOLVED map size:", resolvedMap.size);
+  
+  // After simplification, do a second pass of token replacement for any remaining identifiers
+  // This ensures macro names like FINAL are replaced after numeric simplification
+  // Example: (FINAL*(2+0.01)) -> (FINAL*2.01) -> (80*2.01)
+  const tokens = simplifiedExpanded.match(TOKEN_RX) ?? [];
+  // console.log("TOKENS found after simplification:", tokens);
+
+  for (const token of tokens) {
+    // Already in symbolValues? Skip it
+    if (symbolValues.has(token)) {
+      // console.log(`  Token "${token}" already in symbolValues: ${symbolValues.get(token)}`);
+      continue;
+    }
+
+    const value =
+      symbolValues.get(token) ??
+      resolvedMap.get(token) ??
+      null;
+
+    // console.log(`  Token "${token}" resolved to:`, value);
+
+    if (value != null) {
+      // console.log(`  >> Replacing "${token}" with "${value}"`);
+      simplifiedExpanded = replaceIdentifiersOutsideStrings(
+        simplifiedExpanded,
+        (t) => (t === token ? String(value) : t)
+      );
+      // console.log(`  >> After replacement:`, simplifiedExpanded);
+    }
+  }
+
+  // console.log("STEP 3 - after token resolution:", simplifiedExpanded);
+  
+  // One more simplify pass to clean up numbers
+  simplifiedExpanded = simplifyNumericFragments(simplifiedExpanded, context);
+  // console.log("STEP 4 - final simplified:", simplifiedExpanded);
+  
   const errors: unknown[] = [];
 
   try {
     const value = safeEval(evaluableExpanded, context);
+    // console.log("EVAL SUCCESS on evaluableExpanded:", value);
     return {
       expanded: unwrapParens(simplifiedExpanded),
       value,
       error: null,
     };
   } catch (error) {
+    // console.log("EVAL FAILED on evaluableExpanded:", error);
     errors.push(error);
     try {
       const value = safeEval(simplifiedExpanded, context);
+      // console.log("EVAL SUCCESS on simplifiedExpanded:", value);
       return {
         expanded: unwrapParens(simplifiedExpanded),
         value,
         error: null,
       };
     } catch (nextError) {
+      // console.log("EVAL FAILED on simplifiedExpanded:", nextError);
       errors.push(nextError);
       return {
         expanded: unwrapParens(simplifiedExpanded),

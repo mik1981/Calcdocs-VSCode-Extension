@@ -1,49 +1,49 @@
 VEL:
+  formula: 6 * (MUL)
+  unit: V
+  steps: 
+    - Retrieve the macro MUL from test.c (value: 4)
+    - Multiply it by the specified constant with unit-aware computation and automatic rescaling
+    - Live updates: the computed value is refreshed instantly as the formula field is edited
+VEL_MV:
   formula: 5 * MUL
   unit: mV
   steps: 
     - prende 5
     - lo moltiplica per MUL estratto da test.c
   value: 20000
-
+TEST_VEL:
+  formula: 5 * 6 V
+  unit: mV
+  steps: 
+    - prende 5
+    - lo moltiplica per MUL estratto da test.c
+  value: 30000
 ADC_MAX:
   unit: count
   value: 4095
-
 R_PULLUP:
   unit: ohm
   value: 10000
-
 NTC_ADC_10K_25C:
   formula: csv("ntc_10k_table.csv", "25", "temp_c", "resistance_ohm")
   value: 10000
-
 NTC_ADC_10K_22C:
   formula: -csv("ntc_10k_table.csv", "23.1", "temp_c", "resistance_ohm", "linear")
   value: -11254
-
 NTC_ADC_10K_22C_ABS:
   formula: sin(-csv("ntc_10k_table.csv", "19.1", "temp_c", "resistance_ohm", "linear"))
   value: -0.953398608201182
-
-NTC_R:
-  unit: ohm
-  value: 10
-
 TEST_CURR:
   unit: mA
   value: 100
-
 TEST_VOLT:
   formula: NTC_R * 200 mA
-  unit: volt
-  value: 2
-
+  unit: V
 NTC_ADC:
   formula: ADC_MAX * NTC_R / (R_PULLUP + NTC_R)
-  unit: count
+  unit: V
   steps:
     - legge la resistenza NTC a 25C dalla tabella CSV
     - applica il partitore resistivo con pullup da 10k
     - converte la tensione in conteggi ADC a 12 bit
-  value: 4.09090909090909

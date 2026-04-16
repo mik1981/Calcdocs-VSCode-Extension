@@ -1,13 +1,19 @@
 import * as vscode from "vscode";
 
 import { registerCommands } from "./commands/commands";
+import {
+  createClangdService,
+  reconfigureClangdService,
+} from "./clangd/clangdFactory";
+import { ClangdStatus } from "./clangd/ClangdClient";
+import { ClangdService } from "./clangd/ClangdService";
 import { runAnalysis, runActiveCppFileAnalysis } from "./core/analysis";
 import {
   clearInlineCalcDiagnostics,
   refreshInlineCalcDiagnosticsForDocument,
   refreshInlineCalcDiagnosticsForVisibleEditors,
 } from "./core/inlineCalcDiagnostics";
-import { getConfig } from "./core/config";
+import { type CalcDocsConfig, getConfig } from "./core/config";
 import { clearComputedState, createCalcDocsState, clearDiagnostics } from "./core/state";
 
 import { createColoredOutput } from "./utils/output";
@@ -26,14 +32,22 @@ import { registerInlineCalcHoverProvider } from "./providers/inlineCalcHoverProv
 import { registerYamlHoverProvider } from "./providers/yamlHoverProvider";
 import { registerDefinitionProviders } from "./providers/definitionProvider";
 import { registerCppHoverProvider } from "./providers/hoverProvider";
+import { registerHybridHoverProvider } from "./hover/HoverProvider";
+import { DiagnosticsProvider } from "./diagnostics/DiagnosticsProvider";
 import { InlineCalcResultsViewProvider } from "./ui/inlineCalcResultsView";
 import {
   createRuntimeStatusBar,
-  createStatusBar,
   updateRuntimeStatusBar,
-  updateStatusBar,
-  updateStatusBarVisibility,
 } from "./ui/statusBar";
+import { ClangdSymbolProvider } from "./symbols/ClangdSymbolProvider";
+import { HybridSymbolProvider } from "./symbols/HybridSymbolProvider";
+import { LegacyParserProvider } from "./symbols/LegacyParserProvider";
+import { GhostValueProvider } from "./core/ghostValues";
+import { FormulaOutlineProvider } from "./formulaOutline/formulaOutlineProvider";
+import { FormulaRegistry } from "./formulaOutline/formulaRegistry";
+import { registerFormulaCommands } from "./formulaOutline/commands";
+import { registerFormulaOutlineHoverProvider } from "./formulaOutline/hoverProvider";
+
 
 function isCppFileEditor(
   editor: vscode.TextEditor | undefined
@@ -48,6 +62,19 @@ function isCppFileEditor(
   }
 
   return editor.document.uri.scheme === "file";
+}
+
+function applyConfigToState(state: ReturnType<typeof createCalcDocsState>, config: CalcDocsConfig): void {
+  state.enabled = config.enabled;
+  state.inlineCalcEnableCodeLens = config.inlineCalcEnableCodeLens;
+  state.inlineCalcEnableHover = config.inlineCalcEnableHover;
+  state.inlineCalcDiagnosticsLevel = config.inlineCalcDiagnosticsLevel;
+  state.inlineGhostEnabled = config.inlineGhostEnable;
+  state.uiInvasiveness = config.uiInvasiveness;
+  state.cppCodeLens = { ...config.cppCodeLens };
+  state.cppHover = { ...config.cppHover };
+  state.inlineCodeLens = { ...config.inlineCodeLens };
+  state.inlineHover = { ...config.inlineHover };
 }
 
 /**
@@ -68,12 +95,6 @@ let coloredOutput: ReturnType<typeof createColoredOutput> | undefined;
 let scheduler: AnalysisScheduler | undefined;
 
 /**
- * Elemento della status bar che mostra il numero di formule indicizzate.
- * Posizionato a sinistra nella barra di stato di VSCode.
- */
-let statusBar: vscode.StatusBarItem | undefined;
-
-/**
  * Elemento della status bar che mostra lo stato runtime dell'estensione
  * (abilitata/disabilitata) e le statistiche di utilizzo risorse.
  */
@@ -84,6 +105,7 @@ let runtimeStatusBar: vscode.StatusBarItem | undefined;
  * Raccoglie periodicamente statistiche sull'utilizzo della CPU e della memoria.
  */
 let resourceMonitor: ExtensionResourceMonitor | undefined;
+let clangdService: ClangdService | undefined;
 
 /**
  * Punto di ingresso principale dell'estensione VSCode.
@@ -95,7 +117,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Crea il canale di output per i messaggi di log
   outputChannel = vscode.window.createOutputChannel("CalcDocs");
   context.subscriptions.push(outputChannel);
-  // test_lang(context, outputChannel);
   
   // Crea il wrapper ColoredOutput per supportare i colori
   coloredOutput = createColoredOutput(outputChannel);
@@ -113,10 +134,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Crea lo stato iniziale dell'estensione per il workspace
   const state = createCalcDocsState(workspaceRoot, coloredOutput);
-  state.enabled = config.enabled;
-  state.inlineCalcEnableCodeLens = config.inlineCalcEnableCodeLens;
-  state.inlineCalcEnableHover = config.inlineCalcEnableHover;
-  state.inlineCalcDiagnosticsLevel = config.inlineCalcDiagnosticsLevel;
+  applyConfigToState(state, config);
 
   // Create diagnostics collection for YAML errors/discrepancies
   state.diagnostics = vscode.languages.createDiagnosticCollection("calcdocs");
@@ -126,17 +144,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   context.subscriptions.push(state.inlineCalcDiagnostics);
 
-
   state.output.setLevel(config.internalDebugMode);
 
   // Crea gli elementi della status bar
-  statusBar = createStatusBar(context);
   runtimeStatusBar = createRuntimeStatusBar(context);
+
+  clangdService = await createClangdService(context, state.output, config.useClangd);
+  const clangdSymbolProvider = new ClangdSymbolProvider(clangdService);
+  const legacySymbolProvider = new LegacyParserProvider(state);
+  const hybridSymbolProvider = new HybridSymbolProvider(
+    clangdService,
+    clangdSymbolProvider,
+    legacySymbolProvider
+  );
+  const diagnosticsProvider = new DiagnosticsProvider(state, clangdService);
 
   // Crea il provider per i CodeLens (valori delle formule C/C++)
   const codeLensProvider = new CppValueCodeLensProvider(state);
   const inlineCalcCodeLensProvider = new InlineCalcCodeLensProvider(state);
   const inlineCalcResultsViewProvider = new InlineCalcResultsViewProvider(state);
+
+  // Crea il provider per i ghost values
+  const ghostProvider = new GhostValueProvider(state);
+
+  // Formula Outline
+  const formulaRegistry = new FormulaRegistry();
+  const formulaOutlineProvider = new FormulaOutlineProvider(
+    formulaRegistry,
+    () => state.symbolValues   // ← lazy getter: always reflects latest analysis
+  );
+
+  context.subscriptions.push(formulaOutlineProvider);
+  context.subscriptions.push(formulaRegistry);
+  registerFormulaCommands(context, formulaRegistry);
+
+  // Pass formulaRegistry to commands
 
   context.subscriptions.push(
     vscode.window.createTreeView("calcdocs.inlineCalcResults", {
@@ -147,7 +189,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   inlineCalcResultsViewProvider.setActiveEditor(vscode.window.activeTextEditor);
 
-  // Snapshot iniziale delle risorse di sistema
+  // Snapshot iniziale delle risorse di sistema (for resource monitor)
   let lastResourceSnapshot: ExtensionResourceSnapshot = {
     cpuPercent: 0,
     memoryRssMb: process.memoryUsage().rss / (1024 * 1024),
@@ -155,25 +197,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   /**
-   * Aggiorna lo stato della status bar delle formule.
-   * Callback chiamato dopo ogni analisi o cambiamento di configurazione.
+   * Returns dynamic clangd status label based on live service status and active editor.
    */
-  const refreshFormulaStatus = (): void => {
-    if (!statusBar) {
-      return;
+  function getRuntimeBackendLabel(): string {
+    if (!clangdService) {
+      return "legacy";
     }
 
-    updateStatusBar(
-      statusBar,
-      state.formulaIndex.size,
-      state.lastAnalysisStackUsage,
-      state.lastYamlParseError
-    );
-    updateStatusBarVisibility(statusBar, state.hasFormulasFile, state.enabled);
-  };
+    const status = clangdService.getStatus();
+    if (!status.available) {
+      return "fallback";
+    }
+
+    if (status.indexing) {
+      return "clangd idx…";
+    }
+
+    const activeEditor = vscode.window.activeTextEditor;
+    const hasCppEditor = isCppFileEditor(activeEditor);
+
+    if (!status.hasCompileCommands) {
+      return hasCppEditor ? "clangd(no cmds)" : "clangd cfg?";
+    }
+
+    return hasCppEditor ? "clangd ✓" : "clangd ready";
+  }
 
   /**
    * Aggiorna lo stato della status bar runtime (abilitazione e risorse).
+
    * Callback chiamato quando cambiano le risorse di sistema o lo stato di abilitazione.
    */
   const refreshRuntimeStatus = (): void => {
@@ -181,13 +233,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return;
     }
 
+    const runtimeBackendLabel = getRuntimeBackendLabel();
+
     updateRuntimeStatusBar(
       runtimeStatusBar,
       state.enabled,
       lastResourceSnapshot.cpuPercent,
       lastResourceSnapshot.memoryRssMb,
       config.resourceCpuThreshold,
-      state.lastAnalysisStackUsage
+      state.lastAnalysisStackUsage,
+      runtimeBackendLabel
     );
 
     const shouldShow = !state.enabled || lastResourceSnapshot.shouldShowStatus;
@@ -202,8 +257,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   /**
    * Esegue l'analisi completa del workspace e sincronizza tutti i componenti UI
    * che dipendono dallo stato corrente.
-   * Esempio: dopo un cambiamento nel file YAML, aggiorna l'indice delle formule,
-   * la status bar e i CodeLens.
    */
   const runAnalysisAndRefreshUi = async (): Promise<void> => {
     // Se l'estensione è disabilitata, pulisci lo stato e ferma i provider
@@ -211,11 +264,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       clearComputedState(state);
       clearDiagnostics(state);
       clearInlineCalcDiagnostics(state);
-      refreshFormulaStatus();
       refreshRuntimeStatus();
       codeLensProvider.refresh();
       inlineCalcCodeLensProvider.refresh();
       inlineCalcResultsViewProvider.refresh();
+      diagnosticsProvider.mergeForVisibleEditors();
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor) {
+        ghostProvider.update(activeEditor);
+      }
       return;
     }
 
@@ -228,12 +285,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
 
     // Aggiorna tutti i componenti UI
-    refreshFormulaStatus();
     refreshRuntimeStatus();
     codeLensProvider.refresh();
     inlineCalcCodeLensProvider.refresh();
     inlineCalcResultsViewProvider.refresh();
     refreshInlineCalcDiagnosticsForVisibleEditors(state);
+    diagnosticsProvider.mergeForVisibleEditors();
+    if (activeEditor) {
+      ghostProvider.update(activeEditor);
+      formulaOutlineProvider.refreshDecorations();
+    }
   };
 
   const runActiveCppAnalysisAndRefreshUi = async (
@@ -244,16 +305,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
 
     await runActiveCppFileAnalysis(state, editor.document.uri.fsPath);
-    refreshFormulaStatus();
     refreshRuntimeStatus();
     codeLensProvider.refresh();
     inlineCalcCodeLensProvider.refresh();
     inlineCalcResultsViewProvider.refresh();
     refreshInlineCalcDiagnosticsForVisibleEditors(state);
+    diagnosticsProvider.mergeForVisibleEditors();
+    ghostProvider.update(editor);
   };
 
 
-  // Inizializza il monitor delle risorse di sistema
+  // Inizializza il monitor delle risorse di sistema (optional)
   resourceMonitor = new ExtensionResourceMonitor(
     (snapshot) => {
       lastResourceSnapshot = snapshot;
@@ -270,9 +332,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Esegue l'analisi iniziale al caricamento dell'estensione
   await runAnalysisAndRefreshUi();
 
-  // Registra i provider per hover, definition e CodeLens
+// Registra i provider per hover, definition e CodeLens
+  vscode.languages.registerFoldingRangeProvider('yaml', formulaOutlineProvider);
+
   registerDefinitionProviders(context, state, config.enableCppProviders);
   registerCppHoverProvider(context, state, config.enableCppProviders);
+  registerHybridHoverProvider(
+    context,
+    state,
+    hybridSymbolProvider,
+    clangdService,
+    config.enableCppProviders
+  );
+  registerFormulaOutlineHoverProvider(context, formulaRegistry);
   registerInlineCalcHoverProvider(context, state);
   registerYamlHoverProvider(context, state);
   registerCppCodeLensProvider(context, codeLensProvider);
@@ -289,12 +361,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       inlineCalcCodeLensProvider.refresh();
       inlineCalcResultsViewProvider.notifyDocumentChanged(event.document);
       refreshInlineCalcDiagnosticsForDocument(event.document, state);
+      diagnosticsProvider.mergeDiagnosticsForUri(event.document.uri);
 
       const isYamlDocument =
         (event.document.languageId === "yaml" || event.document.languageId === "yml") &&
         (event.document.uri.scheme === "file" || event.document.uri.scheme === "untitled");
       if (isYamlDocument) {
         scheduler?.schedule(200);
+      }
+
+      const editor = vscode.window.activeTextEditor;
+      if (editor && event.document === editor.document) {
+        ghostProvider.update(editor);
       }
     })
   );
@@ -305,6 +383,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       inlineCalcCodeLensProvider.refresh();
       if (editor) {
         refreshInlineCalcDiagnosticsForDocument(editor.document, state);
+        diagnosticsProvider.mergeDiagnosticsForUri(editor.document.uri);
+        ghostProvider.update(editor);
       }
       void runActiveCppAnalysisAndRefreshUi(editor);
     })
@@ -324,6 +404,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       inlineCalcResultsViewProvider.notifyDocumentChanged(document);
       inlineCalcCodeLensProvider.refresh();
       refreshInlineCalcDiagnosticsForDocument(document, state);
+      diagnosticsProvider.mergeDiagnosticsForUri(document.uri);
+      ghostProvider.update(activeEditor);
       void runActiveCppAnalysisAndRefreshUi(activeEditor);
     })
   );
@@ -333,12 +415,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   scheduler.applyConfiguration(context, config);
   context.subscriptions.push(scheduler);
 
-  // Registra i comandi dell'estensione (forceRefresh, toggleEnabled, etc.)
+  // Registra i comandi dell'estensione (toggleEnabled, etc.)
   registerCommands({
     context,
     state,
     scheduler,
     runAnalysisAndRefreshUi,
+    formulaRegistry,
   });
 
   // Gestisce i cambi di configurazione dell'estensione
@@ -352,10 +435,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const previousConfig = config;
       const nextConfig = getConfig();
       config = nextConfig;
-      state.enabled = nextConfig.enabled;
-      state.inlineCalcEnableCodeLens = nextConfig.inlineCalcEnableCodeLens;
-      state.inlineCalcEnableHover = nextConfig.inlineCalcEnableHover;
-      state.inlineCalcDiagnosticsLevel = nextConfig.inlineCalcDiagnosticsLevel;
+      applyConfigToState(state, nextConfig);
+
+      if (
+        event.affectsConfiguration("calcdocs.useClangd") &&
+        clangdService
+      ) {
+        void reconfigureClangdService(
+          clangdService,
+          context,
+          state.output,
+          nextConfig.useClangd
+        ).then(() => {
+          refreshRuntimeStatus();
+          void runAnalysisAndRefreshUi();
+        });
+      }
 
       // Log del cambiamento di stato enabled
       if (previousConfig.enabled !== nextConfig.enabled) {
@@ -368,7 +463,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         clearInlineCalcDiagnostics(state);
       }
 
-
       // Aggiorna la configurazione dello scheduler e del monitor risorse
       scheduler?.applyConfiguration(context, nextConfig);
       resourceMonitor?.applyConfiguration({
@@ -376,9 +470,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         cpuThreshold: nextConfig.resourceCpuThreshold,
       });
       refreshRuntimeStatus();
+      codeLensProvider.refresh();
       inlineCalcCodeLensProvider.refresh();
       inlineCalcResultsViewProvider.refresh();
       refreshInlineCalcDiagnosticsForVisibleEditors(state);
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor) {
+        ghostProvider.update(activeEditor);
+      }
 
       // Determina se è necessario rieseguire l'analisi
       const analysisRelevantChange =
@@ -386,7 +485,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         event.affectsConfiguration("calcdocs.scanInterval") ||
         event.affectsConfiguration("calcdocs.ignoredDirs") ||
         event.affectsConfiguration("calcdocs.enableCppProviders") ||
-        event.affectsConfiguration("calcdocs.cppCacheMaxEntries");
+        event.affectsConfiguration("calcdocs.cppCacheMaxEntries") ||
+        event.affectsConfiguration("calcdocs.cppDefines") ||
+        event.affectsConfiguration("calcdocs.cppUndefines") ||
+        event.affectsConfiguration("calcdocs.cppConfiguration");
 
       if (analysisRelevantChange) {
         void runAnalysisAndRefreshUi();
@@ -409,9 +511,9 @@ export async function deactivate(): Promise<void> {
     outputChannel.dispose();
   }
 
-  // Rilascia le risorse del monitor e della status bar
+  // Rilascia le risorse del monitor
   resourceMonitor?.dispose();
-  statusBar?.dispose();
   runtimeStatusBar?.dispose();
+  await clangdService?.stop();
 }
 

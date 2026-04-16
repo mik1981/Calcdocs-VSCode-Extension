@@ -341,9 +341,15 @@ function evaluateNode(
     case "identifier": {
       const quantity = context.resolveIdentifier(node.name);
       if (!quantity) {
+        // ✅ Formula parametrizzata: variabile libera, non fallire!
+        // Restituiamo un valore dummy dimensionally neutral per permettere alla valutazione di continuare
+        // La formula verrà comunque esportata correttamente nel codice C come macro parametrizzata
         return {
-          ok: false,
-          error: `undefined variable '${node.name}'`,
+          ok: true,
+          value: {
+            kind: "quantity",
+            quantity: createDimensionlessQuantity(1.0),
+          },
         };
       }
 

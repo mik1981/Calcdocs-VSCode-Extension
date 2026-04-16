@@ -79,6 +79,14 @@ const DEFAULT_MEGA_CACHE_MAX_ENTRIES = 50; // Increased for test files
 const MIN_MEGA_CACHE_ENTRIES = 1;
 const megaCache = new Map<string, MegaCacheEntry>();
 
+/**
+ * Clears internal preprocessing cache used for mega translation units.
+ * Useful for explicit "restart" actions from UI commands.
+ */
+export function clearCppParserCache(): void {
+  megaCache.clear();
+}
+
 function normalizeCacheKey(filePath: string): string {
   return path.resolve(filePath).toLowerCase();
 }
@@ -162,7 +170,7 @@ async function resolveInclude(
   dependencyTracker: Set<string>
 ): Promise<string> {
 // FIXED: Prioritize inc/test/inc dirs for external headers
-  output?.appendLine(`[ResolveInclude] 🔍 Searching "${relIncludePath}" (baseDir="${path.relative(workspaceRoot, baseDir)}")`);
+  // output?.appendLine(`[ResolveInclude] 🔍 Searching "${relIncludePath}" (baseDir="${path.relative(workspaceRoot, baseDir)}")`);
   
   const candidateDirs = [
     path.join(baseDir, '..', 'inc'),     // 0. Sibling inc/ (test/src → test/inc)
@@ -192,15 +200,15 @@ async function resolveInclude(
   }
   
   if (!absIncludePath) {
-    output?.appendLine(`[ResolveInclude] ❌ NOT FOUND: ${relIncludePath} (tried ${triedPaths.slice(0,5).join(' → ')}${triedPaths.length>5 ? '...' : ''})`);
+    // output?.appendLine(`[ResolveInclude] ❌ NOT FOUND: ${relIncludePath} (tried ${triedPaths.slice(0,5).join(' → ')}${triedPaths.length>5 ? '...' : ''})`);
     return '';
   }
   
   const key = normalizeCacheKey(absIncludePath);
-  output?.appendLine(`[ResolveInclude] Entry: ${relIncludePath} → ${key} (ext: ${path.extname(relIncludePath)})`);
+  // output?.appendLine(`[ResolveInclude] Entry: ${relIncludePath} → ${key} (ext: ${path.extname(relIncludePath)})`);
 
   if (visited.has(key)) {
-    output?.appendLine(`[ResolveInclude] SKIP recursive include: ${path.basename(relIncludePath)}`);
+    // output?.appendLine(`[ResolveInclude] SKIP recursive include: ${path.basename(relIncludePath)}`);
     return '';
   }
 
@@ -211,9 +219,9 @@ async function resolveInclude(
   let content: string;
   try {
     content = await fsp.readFile(absIncludePath, 'utf8');
-    output?.appendLine(`[ResolveInclude] Read ${relIncludePath}: lines=${content.split('\n').length}`);
+    // output?.appendLine(`[ResolveInclude] Read ${relIncludePath}: lines=${content.split('\n').length}`);
   } catch (err) {
-    output?.appendLine(`[ResolveInclude] Failed read ${relIncludePath}: ${err}`);
+    // output?.appendLine(`[ResolveInclude] Failed read ${relIncludePath}: ${err}`);
     return '';
   }
   
@@ -223,7 +231,7 @@ async function resolveInclude(
   for (const line of lines) {
   const includeMatch = line.match(INCLUDE_RX);
     if (includeMatch) {
-      output?.appendLine(`[ResolveInclude] Found include match: ${includeMatch[1]}`);
+      // output?.appendLine(`[ResolveInclude] Found include match: ${includeMatch[1]}`);
       const nested = await resolveInclude(
 
         includeMatch[1], 
@@ -404,7 +412,7 @@ function resolveCondition(
   );
 
   let resolved = cleaned;
-  output?.appendLine(`resolveCondition input: "${rawCondition}" -> "${cleaned}"`); // TEMP DEBUG
+  // output?.appendLine(`resolveCondition input: "${rawCondition}" -> "${cleaned}"`); // TEMP DEBUG
   
   resolved = resolved.replace(/defined\s*\(\s*([A-Za-z_]\w*)\s*\)/gi, (_, symbol) => {
     return definedSymbols.has(symbol) || consts.has(symbol) ? "1" : "0";
@@ -707,9 +715,7 @@ function parseValueDeclaration(line: string): ParsedValueDeclaration | undefined
     leftSide.includes("[") ||
     leftSide.includes("]") ||
     leftSide.includes("{") ||
-    leftSide.includes("}") ||
-    leftSide.includes("*") ||
-    leftSide.includes("&")
+    leftSide.includes("}")
   ) {
     return undefined;
   }
@@ -723,7 +729,12 @@ function parseValueDeclaration(line: string): ParsedValueDeclaration | undefined
     return undefined;
   }
 
-  const name = leftTokens[leftTokens.length - 1];
+  let name = leftTokens[leftTokens.length - 1].replace(/^[*&]+/, "");
+  if (!name && leftTokens.length >= 2) {
+    const fallbackToken = leftTokens[leftTokens.length - 2];
+    name = fallbackToken.replace(/^[*&]+/, "");
+  }
+
   if (!/^[A-Za-z_]\w*$/.test(name)) {
     return undefined;
   }
@@ -1075,13 +1086,13 @@ export async function collectDefinesAndConsts(
       if (!isDirectiveLine) {
         let isActiveBranch = true;
         if (currentCondition) {
-          output?.appendLine(`[CPP2] Eval condition "${currentCondition}"`);
+          // output?.appendLine(`[CPP2] Eval condition "${currentCondition}"`);
           try {
             const evalResult = safeEval(currentCondition);
-            output?.appendLine(`[CPP2] condition eval = ${evalResult} (active=${evalResult !== 0})`);
+            // output?.appendLine(`[CPP2] condition eval = ${evalResult} (active=${evalResult !== 0})`);
             isActiveBranch = evalResult !== 0;
           } catch (e) {
-            output?.error(`[CPP2] condition eval FAILED: ${e}`);
+            // output?.error(`[CPP2] condition eval FAILED: ${e}`);
             isActiveBranch = true;
           }
         }
@@ -1104,7 +1115,7 @@ export async function collectDefinesAndConsts(
         if (parsedDefine && !seenDefinesInFile.has(parsedDefine.name)) {
           seenDefinesInFile.add(parsedDefine.name);
           const { name, expr, params } = parsedDefine;
-          output?.appendLine(`[CPP2] Parsed define ${name}=${expr} cond=${definitionCondition} active=${isActiveBranch}`);
+          // output?.appendLine(`[CPP2] Parsed define ${name}=${expr} cond=${definitionCondition} active=${isActiveBranch}`);
 
           if (params) {
             if (!functionDefines.has(name)) {

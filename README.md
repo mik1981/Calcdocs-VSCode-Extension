@@ -1,19 +1,40 @@
-# 🧮 CalcDocs — See What Your Firmware Really Computes
+# 🧮 CalcDocs — See Your Firmware as It Actually Computes **[0.2.0-prerelease]**
 
-[https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-version.png]
-(https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+[![https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-version.png](https://img.shields.io/visual-studio-marketplace/v/convergo-dev.calcdocs-vscode-extension)](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+[![https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-downloads.png](https://img.shields.io/visual-studio-marketplace/d/convergo-dev.calcdocs-vscode-extension)](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+[![License](https://img.shields.io/github/license/mik1981/Calcdocs-VSCode-Extension)](./LICENSE.md)
 
-[https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-downloads.png]
-(https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
 
-[https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-rating.png]
-(https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+**Stop navigating macros. Stop guessing values.**  
 
-[https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/license-mit.png]
-(LICENSE.md)
+Embedded firmware is not hard because of logic — it's hard because values are hidden.  
+CalcDocs reveals the actual computed values of your C/C++ and YAML logic directly in VS Code.  
 
-**Stop guessing what your macros and formulas evaluate to.  
-See real computed values from your C/C++ firmware — instantly, inside VS Code.**
+👉 What you see is what your firmware computes.  
+
+## Macro Chain Revelation
+
+| Inside *C code* | Inside *formulas\*.yaml* file |
+| :---: | :---: |
+![Macro Chain Revelation in code](./resources/macro_chain_revelation_code.gif) | ![Macro Chain Revelation in formulas](./resources/macro_chain_revelation_formulas.gif) |
+
+## Firmware blindness before & after
+
+| Before | After |
+| :---: | :---: |
+| ![Before](./resources/firmware_blindness_before.png) | ![After](./resources/firmware_blindness_after.png) |
+
+## Macro and constant generation header output by quick menu
+| Generation | Quick menu |
+| :---: | :---: |
+| ![Macro and constant generation header output](./resources/generate_header.gif) | ![Macro and constant generation header output](./resources/quick_menu.png) |
+
+---
+
+**Understand C macros in seconds, not minutes.**  
+See real computed values from your C/C++ firmware — instantly, inside VS Code.
+
+👉 Spreadsheets hide logic. YAML exposes it.
 
 CalcDocs shows you the *actual numeric results* of your C/C++ constants and YAML formulas — before you compile.
 
@@ -21,21 +42,61 @@ CalcDocs shows you the *actual numeric results* of your C/C++ constants and YAML
 
 ## ⚡ What problem does it solve?
 
-In embedded projects, errors often hide in plain sight:
+In embedded and firmware projects, the real value of a variable is often hidden behind layers of indirection:
 
-- A macro expands to something unexpected  
-- A constant silently overflows  
-- A formula looks correct but produces wrong values  
-- YAML documentation drifts away from real firmware values  
+- C macros expand across multiple files and headers
+- Constants depend on chained definitions
+- Formulas are split between code and documentation
+- YAML specifications drift away from the actual firmware logic
+- Unit conversions and scaling factors are implicit and easy to misread
 
-👉 These issues are usually discovered **too late (after flashing)**.
+As a result, understanding the *actual numeric value* of something requires navigation, mental expansion, and manual tracing across the codebase.
 
-**CalcDocs shows you the truth immediately.**  
-It is a firmware understanding layer
+👉 This slows down development and introduces silent, hard-to-detect errors.
 
-![CalcDocs CodeLens Demo](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Refresh.gif)  
-![CalcDocs Screenshot](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Definition.jpg)  
-![CalcDocs Formula Refresh Demo](https://github.com/mik1981/Calcdocs-VSCode-Extension/raw/main/resources/CalcDocs_Formulas.gif)  
+---
+
+CalcDocs removes this gap by turning firmware into a **live evaluated system**.
+
+It shows resolved values directly in place:
+
+- inside C/C++ code (macros, constants, expressions)
+- inside YAML formula definitions (synchronized view)
+- with optional dimensional consistency checks (unit-aware validation)
+
+No file switching. No mental expansion. No guessing.
+
+👉 You always see the *final computed value where it matters*.
+
+---
+
+## 📄 Formula files (YAML ↔ C/C++ synchronized view)
+
+`formulas*.yaml` is a synchronized source of truth for firmware formulas.
+
+CalcDocs binds YAML definitions directly into C/C++ code, showing resolved values inline without navigation or context switching.
+
+This removes the need to trace formulas across files — values are always visible where they are used.
+
+Example:
+
+```yaml
+MAX_SPEED:
+  formula: RPM * 0.10472
+  unit: m/s
+```
+
+In C/C++:
+
+```c
+#define RPM 1000
+```
+
+After lunch generate header command, CalcDocs shows directly in C:
+
+```c
+#define MAX_SPEED  (SPEED * 100)  // <- 10'472
+```
 
 ---
 
@@ -48,60 +109,89 @@ Write this:
 #define SPEED (RPM * 0.10472)
 ```
 
-Hover SPEED →
+And it will automatically SPEED →
 
-```text
-RPM * 0.10472
-= 1000 * 0.10472
-= 104.72 (0x68.B8)
+- with ghost value enabled:
+```c
+#define SPEED (RPM * 0.10472)   <- 104.72
+```
+
+- with codelens enabled:
+```c
+// CalcDocs: #define SPEED 104.72
+#define SPEED (RPM * 0.10472)
 ```
 
 💡 No compile. No debug. No guessing.
 
 --- 
 
-# 🔧 Quick Start (1 minute)
+# 🚀 0 → Value in seconds
+
 1. Install the extension
 2. Open a C/C++ or YAML file
-3. Hover any:
-   - #define
-   - const
-   - YAML formula symbol
+3. Hover any value
 
-✅ Done — values appear automatically
+✅ Done — results appear instantly
 
 --- 
 
-# 💡 Why it's useful (real cases)
+# 🔥 Why it matters (real cases)
+
 🔥 Detect overflow before it breaks your MCU  
-🔍 **Understand complex macro chains instantly**  
-🔄 Keep YAML formulas and C constants aligned  
-⚠️ Catch mismatches between documentation and firmware  
+🔍 Understand complex macro chains instantly  
+🔄 Keep YAML and C values aligned
+⚠️ Catch mismatches before runtime  
 
 --- 
 
 # ⭐ Key Features
-- Real computed values (compiler-like evaluation)
-- Hover previews with full expansion (dec + hex)
-- Go to definition (YAML ↔ C/C++)
-- CodeLens with resolved values
-- Mismatch detection (YAML vs C)
-- Inline calculations in comments (// calc:)
-- Conditional macro support (#ifdef, #if, etc.)
 
---- 
+## ⚙️ Core Evaluation Engine
+- Real-time computation of C/C++ macros, constants, and expressions
+- Full macro expansion with step-by-step resolution trace
+- Deterministic evaluation of firmware values without compilation
 
-# 🧪 Example (YAML + C sync)
-```yaml
-MAX_SPEED:
-  formula: RPM * 0.10472
-#define RPM 1000
-const float MAX_SPEED = RPM * 0.10472;
-```
+---
 
-👉 CalcDocs verifies they produce the same value.
+## 👀 Inline Intelligence
+- Inline value previews directly in source code (no navigation required)
+- CodeLens with resolved firmware values at a glance
+- Hover-based value inspection with decimal/hex representation
+- Formula traceability showing how values are derived
+
+---
+
+## 🧠 Hybrid Language Understanding
+- clangd integration (AST-aware analysis when available)
+- IntelliSense enhancement layer (non-intrusive, additive only)
+- Internal parser fallback for full workspace coverage
+
+---
+
+## 📄 YAML ↔ Firmware Synchronization
+- Bidirectional linking between `formulas*.yaml` and C/C++ code
+- Shared evaluation model across code and configuration layers
+- Unified view of firmware logic across files
+
+---
+
+## ⚖️ Analysis & Validation
+- Dimensional consistency checks (unit-aware validation across formulas and code)
+- Mismatch detection between YAML definitions and C/C++ values
+- Conditional compilation awareness (`#if`, `#ifdef`, `#elif`, `#else`)
+
+---
+
+## 🔍 Diagnostics Layer
+- Detection of inconsistent or overridden computed values
+- Formula resolution warnings and trace flags
+- Silent failure prevention for macro chains and derived constants
+
+---
 
 # 🧠 Who is this for?
+
 - Embedded developers
 - Firmware engineers
 - Control / mechanical engineers working with formulas
@@ -109,11 +199,16 @@ const float MAX_SPEED = RPM * 0.10472;
 
 --- 
 
-# ⚙️ Recommended setup
+# ⚙️ Recommended setup (optional)
 
 Works best with:
 
-- C/C++ (ms-vscode.cpptools)
+**Clangd LSP (highly recommended)**:  
+Install [LLVM vscode-clangd](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd) for best C/C++ hover/definition/symbols.  
+CalcDocs auto-detects it and uses its APIs (no conflicts/duplication).
+
+Other great companions:
+- C/C++ (ms-vscode.cpptools)  
 - CMake Tools
 - Cortex-Debug
 
@@ -121,7 +216,7 @@ Works best with:
 
 ## ❤️ Support
 
-If CalcDocs helps you save time or avoid bugs, consider supporting the project:
+If CalcDocs saves you time:
 
 - ⭐ **Leave a review** (this helps a lot)  
   https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension
@@ -130,6 +225,21 @@ If CalcDocs helps you save time or avoid bugs, consider supporting the project:
   [![PayPal](https://img.shields.io/badge/PayPal-Support-blue?logo=paypal&logoColor=white)](https://www.paypal.me/gianmichelepasinelli)
 
 --- 
+
+## 🚀 Future Plans
+
+- *Multi-workspace support*: Seamless handling of values across multiple VS Code workspaces
+- *Enhanced information representation*: Better visualizations, graphs, and data presentation
+- *UI improvements*: More intuitive interfaces and customization options
+- *Reduced invasiveness*: Lighter resource usage, configurable activation, and minimal visual clutter
+- *Performance optimizations* for large projects (caching, incremental updates)
+- *Export computed values to CSV/JSON* for documentation
+- Complete *Unit conversion* coverage (km/h ↔ m/s, etc.)
+- *Cortex-Debug integration* for live variable comparison
+- *AI-assisted validation* and optimization suggestions
+- *Bulk computation mode* for configuration sweeps
+
+---
 
 ## 📚 Documentation
 
@@ -142,3 +252,4 @@ Full documentation available on GitHub:
 - 👉 [Architecture](https://github.com/mik1981/Calcdocs-VSCode-Extension/blob/main/docs/architecture.md)
 - 👉 [Limitations](https://github.com/mik1981/Calcdocs-VSCode-Extension/blob/main/docs/limitations.md)
 - 👉 [Contributing](https://github.com/mik1981/Calcdocs-VSCode-Extension/blob/main/docs/contributing.md)
+- 👉 [Inline Calculations](https://github.com/mik1981/Calcdocs-VSCode-Extension/blob/main/docs/inline-calculations.md)

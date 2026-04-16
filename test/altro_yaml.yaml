@@ -1,0 +1,61 @@
+---
+:project:
+  :build_root: build
+  :test_file_prefix: test_
+  :default_tasks:
+    - test:all
+  :use_mocks: TRUE
+  :use_test_preprocessor: :all
+  :use_auxiliary_dependencies: TRUE
+
+:paths:
+  :test:
+    - tests/**
+  :source:
+    - ../Application/**
+    - ../Core/**
+  :support:
+    - tests/support
+  :include:
+    - ../Application/**
+    - ../Application/Control
+    - ../Application/Data
+    - ../Application/Battery
+    - ../Core/Inc
+    - ../Drivers/CMSIS/Include
+    - ../Drivers/CMSIS/Device/ST/STM32F0xx/Include
+    - ../Drivers/STM32F0xx_HAL_Driver/Inc
+    - ../Drivers/STM32F0xx_HAL_Driver/Inc/Legacy
+
+:files:
+  :exclude:
+    - ../Core/Src/main.c
+
+:defines:
+  :common:
+    - TEST
+    - USE_HAL_DRIVER
+    - STM32F0xx
+
+:cmock:
+  :mock_prefix: mock_
+  :when_no_prototypes: :warn
+  :enforce_strict_ordering: TRUE
+  :plugins:
+    - :ignore
+    - :callback
+    - :expect_any_args
+    - :ignore_arg
+  :treat_as:
+    uint8: HEX8
+    uint16: HEX16
+    uint32: UINT32
+    int8: INT8
+    bool: UINT8
+
+:flags:
+  :test:
+    :compile:
+      :*:
+        - -Wall
+        - -Wextra

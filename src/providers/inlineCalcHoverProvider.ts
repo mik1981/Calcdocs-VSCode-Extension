@@ -17,7 +17,8 @@ function isCommentishLine(lineText: string, languageId: string): boolean {
 }
 
 function buildHoverMarkdown(
-  results: ReturnType<typeof evaluateInlineCalcs>
+  results: ReturnType<typeof evaluateInlineCalcs>,
+  state: CalcDocsState
 ): vscode.MarkdownString {
   const lines: string[] = ["### CalcDocs Inline"];
 
@@ -25,10 +26,16 @@ function buildHoverMarkdown(
     const kindLabel = result.kind === "assign" ? "@assign" : "=calc";
     lines.push(`- **${kindLabel}** \`${result.source}\``);
     lines.push(`  - Result: \`${result.displayValue}\``);
-    lines.push(`  - Dimension: \`${result.dimensionText}\``);
-    if (result.error) {
+    if (state.inlineHover.showDimension) {
+      lines.push(`  - Dimension: \`${result.dimensionText}\``);
+    }
+    if (result.error && state.inlineHover.showErrors) {
       lines.push(`  - Error: ${result.error}`);
     }
+    if (!state.inlineHover.showWarnings) {
+      continue;
+    }
+
     for (const warning of result.warnings) {
       lines.push(`  - Warning: ${warning}`);
     }
@@ -57,7 +64,13 @@ export function registerInlineCalcHoverProvider(
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(selector, {
       provideHover(document, position) {
-        if (!state.enabled || !state.inlineCalcEnableHover) {
+        if (!state.enabled || !state.inlineHover.enabled) {
+          return undefined;
+        }
+
+        // New priority logic: skip if ghost or codelens takes precedence  
+        const { showHover } = require("../core/ghostPolicy").getLineDisplayPriority(document, position.line, state);
+        if (!showHover) {
           return undefined;
         }
 
@@ -73,7 +86,7 @@ export function registerInlineCalcHoverProvider(
           return undefined;
         }
 
-        const markdown = buildHoverMarkdown(lineResults);
+        const markdown = buildHoverMarkdown(lineResults, state);
         const lineRange = document.lineAt(position.line).range;
         return new vscode.Hover(markdown, lineRange);
       },
