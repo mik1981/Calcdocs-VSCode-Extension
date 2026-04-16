@@ -1,9 +1,8 @@
 # 🧮 CalcDocs — See Your Firmware as It Actually Computes **[0.2.0-prerelease]**
 
-[![https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-version.png](https://img.shields.io/visual-studio-marketplace/v/convergo-dev.calcdocs-vscode-extension)](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
-[![https://raw.githubusercontent.com/mik1981/Calcdocs-VSCode-Extension/main/badges/marketplace-downloads.png](https://img.shields.io/visual-studio-marketplace/d/convergo-dev.calcdocs-vscode-extension)](https://marketplace.visualstudio.com/items?itemName=convergo-dev.calcdocs-vscode-extension)
+[![Version](https://vsmarketplacebadges.dev/version-short/convergo-dev.calcdocs-vscode-extension.svg)](https://visualstudio.com)
+[![Download](https://vsmarketplacebadges.dev/downloads-short/convergo-dev.calcdocs-vscode-extension.svg)](https://visualstudio.com)
 [![License](https://img.shields.io/github/license/mik1981/Calcdocs-VSCode-Extension)](./LICENSE.md)
-
 
 **Stop navigating macros. Stop guessing values.**  
 
