@@ -4,7 +4,7 @@ import * as fs from "fs";
 
 // Stable key -> English message map used by call sites.
 const fallbackEn: Record<string, string> = {
-  "extension.description": "Excel inside firmware source code & Formula Evaluator & C/C++ Constant Sync & sanity checker - shows real computed values to catch errors before compiling, plus fast Go to Definition navigation",
+  "extension.description": "Excel for firmware — instantly evaluate C/C++ macros, constants, and YAML formulas with real computed values inside VS Code",
 
   "config.title": "CalcDocs",
   "config.enabled": "Enable or disable CalcDocs without uninstalling the extension.",

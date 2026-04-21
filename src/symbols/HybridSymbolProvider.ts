@@ -54,6 +54,7 @@ export class HybridSymbolProvider {
         name: parserSymbol.name || clangdSymbol.name,
         kind: mergeKinds(clangdSymbol, parserSymbol),
         value: parserSymbol.value ?? clangdSymbol.value,
+        unit: parserSymbol.unit ?? clangdSymbol.unit,
         type: clangdSymbol.type ?? parserSymbol.type,
         location: clangdSymbol.location ?? parserSymbol.location,
         expression: parserSymbol.expression ?? clangdSymbol.expression,
@@ -61,6 +62,7 @@ export class HybridSymbolProvider {
         confidence: 0,
         fieldSources: {
           value: parserSymbol.value != null ? "parser" : "clangd",
+          unit: parserSymbol.unit != null ? "parser" : clangdSymbol.unit != null ? "clangd" : undefined,
           type: clangdSymbol.type != null ? "clangd" : parserSymbol.type != null ? "parser" : undefined,
           location:
             clangdSymbol.location != null

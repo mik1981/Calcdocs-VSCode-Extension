@@ -19,6 +19,10 @@ Key settings:
 - `calcdocs.resourceStatusMode`
 - `calcdocs.resourceCpuThreshold`
 
+## Formulas YAML
+
+See [Formula YAML Guide](formulas-yaml.md) for `formulas*.yaml` structure and usage.
+
 ## C/C++ UI
 
 - `calcdocs.cpp.codeLens.*`

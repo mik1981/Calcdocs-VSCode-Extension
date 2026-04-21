@@ -23,8 +23,10 @@ export function extractPureGhostValue(title: string, kind: string): string {
     return noPrefix;
   }*/
   
-  // CASO 1: #define NAME VALUE → pure VALUE
-  const defineMatch = noPrefix.match(/^#define\s+[^\s]+\s+(.+)$/);
+  // CASO 1: #define NAME(params) VALUE → pure VALUE
+  //const defineMatch = noPrefix.match(/^#define\s+[^\s]+\s+(.+)$/);
+  // We match #define, then the name with optional params, then the value.
+  const defineMatch = noPrefix.match(/^#define\s+[A-Za-z_]\w*(?:\s*\([^)]*\))?\s+(.+)$/);
   if (defineMatch) {
     return defineMatch[1].trim();
   }
@@ -33,6 +35,13 @@ export function extractPureGhostValue(title: string, kind: string): string {
   const constMatch = noPrefix.match(/^[^=]+\s*=\s*(.+)$/);
   if (constMatch) {
     return constMatch[1].trim();
+  }
+
+  // CASO 3: Anonymous expressions (e.g. from control flow)
+  // If it starts with "(" and ends with ")", it might be an anonymous expression preview
+  // e.g. "((Flags < 101))" -> "(Flags < 101)"
+  if (noPrefix.startsWith("(") && noPrefix.endsWith(")")) {
+    return noPrefix;
   }
   
   // Fallback: full stripped text (errors, ambiguity, etc.)

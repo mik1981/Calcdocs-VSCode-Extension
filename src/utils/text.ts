@@ -3,8 +3,76 @@
  * Example: "A + 1 // note" -> "A + 1"
  */
 export function stripComments(text: string): string {
-  const withoutLineComments = text.split("//")[0];
-  return withoutLineComments.replace(/\/\*.*?\*\//g, "").trim();
+  let output = "";
+  let inString: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const current = text[i];
+    const next = i + 1 < text.length ? text[i + 1] : "";
+
+    if (inLineComment) {
+      if (current === "\n" || current === "\r") {
+        inLineComment = false;
+        output += current;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (current === "*" && next === "/") {
+        inBlockComment = false;
+        i += 1;
+        // Preserve token separation where comment removal would merge symbols.
+        output += " ";
+        continue;
+      }
+
+      if (current === "\n" || current === "\r") {
+        output += current;
+      }
+      continue;
+    }
+
+    if (inString) {
+      output += current;
+      if (current === "\\") {
+        if (i + 1 < text.length) {
+          output += text[i + 1];
+          i += 1;
+        }
+        continue;
+      }
+
+      if (current === inString) {
+        inString = null;
+      }
+      continue;
+    }
+
+    if (current === '"' || current === "'" || current === "`") {
+      inString = current;
+      output += current;
+      continue;
+    }
+
+    if (current === "/" && next === "/") {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+
+    if (current === "/" && next === "*") {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+
+    output += current;
+  }
+
+  return output.trim();
 }
 
 /**

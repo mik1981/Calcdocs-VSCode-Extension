@@ -20,42 +20,42 @@
  */
 
 import type { OutlineFormula } from './formulaParser';
+import type { Quantity } from '../engine/units';
 
 
+import {
+  UNIT_SPECS as ENGINE_UNIT_SPECS,
+  SCALABLE_UNIT_FAMILY as ENGINE_SCALABLE_UNIT_FAMILY,
+  UNIT_SCALE_FACTORS as ENGINE_UNIT_SCALE_FACTORS,
+  getUnitSpec as getEngineUnitSpec,
+  normalizeUnitToken as normalizeEngineUnitToken
+} from '../engine/units';
 
 type UnitSpec = {
   factor: number;
   dimension: 'voltage' | 'current' | 'resistance' | 'time' | 'frequency' | 'power' | 'capacitance' | 'inductance' | 'angle' | 'temperature' | 'dimensionless';
 };
 
-export const UNIT_SPECS = new Map<string, UnitSpec>([
-  ['v',   { factor: 1,    dimension: 'voltage' }],
-  ['mv',  { factor: 1e-3, dimension: 'voltage' }],
-  ['kv',  { factor: 1e3,  dimension: 'voltage' }],
+export const UNIT_SPECS = new Map<string, UnitSpec>(
+  Array.from(ENGINE_UNIT_SPECS.entries()).map(([token, spec]) => {
+    let dimension: UnitSpec['dimension'] = 'dimensionless';
+    
+    // Map from unified families to formulaEvaluator's simplified dimensions
+    const family = ENGINE_SCALABLE_UNIT_FAMILY.get(token);
+    if (family === 'voltage') dimension = 'voltage';
+    else if (family === 'current') dimension = 'current';
+    else if (family === 'resistance') dimension = 'resistance';
+    else if (family === 'time') dimension = 'time';
+    else if (family === 'frequency') dimension = 'frequency';
+    else if (family === 'power') dimension = 'power';
+    else if (family === 'capacitance') dimension = 'capacitance';
+    else if (family === 'inductance') dimension = 'inductance';
+    else if (family === 'angle') dimension = 'angle';
+    else if (family === 'temperature') dimension = 'temperature';
 
-  ['a',   { factor: 1,    dimension: 'current' }],
-  ['ma',  { factor: 1e-3, dimension: 'current' }],
-
-  ['ohm', { factor: 1,    dimension: 'resistance' }],
-  ['kohm',{ factor: 1e3,  dimension: 'resistance' }],
-
-  ['hz',  { factor: 1,    dimension: 'frequency' }],
-  ['khz', { factor: 1e3,  dimension: 'frequency' }],
-
-  ['s',   { factor: 1,    dimension: 'time' }],
-  ['ms',  { factor: 1e-3, dimension: 'time' }],
-
-  ['w',   { factor: 1,    dimension: 'power' }],
-
-  ['f',   { factor: 1,    dimension: 'capacitance' }],
-  ['h',   { factor: 1,    dimension: 'inductance' }],
-
-  ['deg', { factor: Math.PI / 180, dimension: 'angle' }],
-  ['rad', { factor: 1, dimension: 'angle' }],
-
-  ['count',{ factor: 1, dimension: 'dimensionless' }],
-  ['%',   { factor: 0.01, dimension: 'dimensionless' }],
-]);
+    return [token, { factor: spec.factorToSi, dimension }];
+  })
+);
 
 export function getUnitSpec(unit?: string): UnitSpec | null {
   if (!unit) return null;
@@ -191,53 +191,7 @@ export const MATH_SCOPE: Record<string, unknown> = {
 //   displayValue = rawValue_in_SI / factor
 // ---------------------------------------------------------------------------
 
-export const UNIT_SCALE_FACTORS = new Map<string, number>([
-  // Voltage
-  ['v',     1      ],
-  ['mv',    1e-3   ],
-  ['kv',    1e3    ],
-  // Current
-  ['a',     1      ],
-  ['ma',    1e-3   ],
-  ['ua',    1e-6   ],
-  // Resistance
-  ['ohm',   1      ],
-  ['kohm',  1e3    ],
-  ['mohm',  1e6    ],
-  // Frequency
-  ['hz',    1      ],
-  ['khz',   1e3    ],
-  ['mhz',   1e6    ],
-  ['ghz',   1e9    ],
-  // Time
-  ['s',     1      ],
-  ['ms',    1e-3   ],
-  ['us',    1e-6   ],
-  ['ns',    1e-9   ],
-  // Power
-  ['w',     1      ],
-  ['mw',    1e-3   ],
-  ['kw',    1e3    ],
-  // Capacitance
-  ['f',     1      ],
-  ['uf',    1e-6   ],
-  ['nf',    1e-9   ],
-  ['pf',    1e-12  ],
-  // Inductance
-  ['h',     1      ],
-  ['mh',    1e-3   ],
-  ['uh',    1e-6   ],
-  ['nh',    1e-9   ],
-  // Angle
-  ['rad',   1               ],
-  ['deg',   Math.PI / 180   ],
-  // Temperature delta (offset conversions not applicable here)
-  ['c',     1      ],
-  ['k',     1      ],
-  // Dimensionless / count
-  ['count', 1      ],
-  ['%',     0.01   ],
-]);
+export const UNIT_SCALE_FACTORS = ENGINE_UNIT_SCALE_FACTORS;
 
 /**
  * Set of all recognised unit token strings (lowercase).
@@ -298,32 +252,88 @@ export function isKnownUnit(unit: string | undefined): boolean {
 // Core evaluator
 // ---------------------------------------------------------------------------
 
+export type LookupResolver = (
+  functionName: string, 
+  args: Array<string | number>, 
+  yamlPath?: string
+) => number | Quantity;
+
+
+// ---------------------------------------------------------------------------
+// Quantity literal preprocessing
+// Converts "6 V" → "6" (SI value), "200 mA" → "0.2", etc.
+// Mirrors replaceInlineQuantityLiterals in inlineCalc.ts but for formulaEvaluator.
+// ---------------------------------------------------------------------------
+
+const QUANTITY_LITERAL_FE_RX =
+  /(?<![A-Za-z0-9_.$])([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s+([A-Za-z%][A-Za-z0-9_%]*)/g;
+
+function replaceQuantityLiteralsForEval(expression: string): string {
+  return expression.replace(
+    QUANTITY_LITERAL_FE_RX,
+    (full: string, rawNumeric: string, rawUnit: string) => {
+      const numeric = Number(rawNumeric);
+      if (!Number.isFinite(numeric)) {
+        return full;
+      }
+      const normalized = normalizeEngineUnitToken(rawUnit);
+      const spec = getEngineUnitSpec(normalized);
+      if (!spec) {
+        return full;
+      }
+      return String(numeric * spec.factorToSi);
+    }
+  );
+}
+
 /**
  * Evaluates a single expression given a flat variable scope.
  *
  * @param expr   Expression string, e.g. "V * V / R" or "ADC_MAX * NTC_R / (R_PULLUP + NTC_R)"
  * @param vars   All resolved variables (math scope is always included as baseline)
+ * @param lookupResolver Optional resolver for csv(), table(), lookup()
+ * @param yamlPath Optional path for relative lookups
  * @returns      Finite numeric result, or null if unresolvable / invalid
  */
 export function evaluateFormulaExpression(
   expr: string,
-  vars: Record<string, number>
+  vars: Record<string, number>,
+  lookupResolver?: LookupResolver,
+  yamlPath?: string
 ): number | null {
   const trimmed = expr.trim();
   if (!trimmed) return null;
 
+  // Preprocess quantity literals: "6 V" → "6" (SI), "200 mA" → "0.2"
+  // This enables expressions like "5 * 6 V" or "10 kHz * 2" to evaluate correctly.
+  const preprocessed = replaceQuantityLiteralsForEval(trimmed);
+
   // Caller variables take precedence over math scope
   const scope: Record<string, unknown> = { ...MATH_SCOPE, ...vars };
+
+  if (lookupResolver) {
+    scope.csv = (...args: Array<string | number>) => lookupResolver('csv', args, yamlPath);
+    scope.table = (...args: Array<string | number>) => lookupResolver('table', args, yamlPath);
+    scope.lookup = (...args: Array<string | number>) => lookupResolver('lookup', args, yamlPath);
+  }
+
   const keys = Object.keys(scope);
   const vals = Object.values(scope);
 
   try {
     // eslint-disable-next-line no-new-func
-    const fn = new Function(...keys, `"use strict"; return (${trimmed});`);
+    const fn = new Function(...keys, `"use strict"; return (${preprocessed});`);
     const result: unknown = fn(...vals);
 
     if (typeof result === 'number' && Number.isFinite(result)) {
       return result;
+    }
+
+    if (typeof result === 'object' && result !== null && 'valueSi' in result) {
+      const q = result as Quantity;
+      if (Number.isFinite(q.valueSi)) {
+        return q.valueSi; 
+      }
     }
     return null;
   } catch {
@@ -350,10 +360,12 @@ export function evaluateFormulaExpression(
  *
  * @param formulas   All parsed formulas from the document
  * @param cSymbols   state.symbolValues — C/C++ macros already resolved by the analysis engine
+ * @param lookupResolver Optional resolver for csv(), table(), lookup()
  */
 export function buildFormulaSymbolTable(
   formulas: OutlineFormula[],
-  cSymbols?: Map<string, number>
+  cSymbols?: Map<string, number>,
+  lookupResolver?: LookupResolver
 ): Map<string, number> {
   const table = new Map<string, number>();
 
@@ -380,7 +392,12 @@ export function buildFormulaSymbolTable(
         ...(formula.example ?? {}),
       };
 
-      const result = evaluateFormulaExpression(formula.expr, vars);
+      const result = evaluateFormulaExpression(formula.expr, vars, lookupResolver, formula._filePath);
+      
+      if (typeof result === 'number' && Number.isFinite(result)) {
+        table.set(formula.id, result);
+      }
+
       if (result !== null) {
         table.set(formula.id, result);
       }
@@ -407,11 +424,13 @@ export function buildFormulaSymbolTable(
  * @param formula      Parsed formula entry
  * @param symbolTable  Cross-formula resolved values (from buildFormulaSymbolTable)
  * @param cSymbols     state.symbolValues — C/C++ macros (pass undefined when not available)
+ * @param lookupResolver Optional resolver for csv(), table(), lookup()
  */
 export function resolveFormulaValue(
   formula: OutlineFormula,
   symbolTable: Map<string, number>,
-  cSymbols?: Map<string, number>
+  cSymbols?: Map<string, number>,
+  lookupResolver?: LookupResolver
 ): { resolved: number | null; source: 'expr' | 'value' | 'none' } {
 
   if (formula.expr) {
@@ -424,7 +443,8 @@ export function resolveFormulaValue(
       ...(formula.example ?? {}),
     };
 
-    const result = evaluateFormulaExpression(formula.expr, vars);
+    const result = evaluateFormulaExpression(formula.expr, vars, lookupResolver, formula._filePath);
+
     if (result !== null) {
       return { resolved: result, source: 'expr' };
     }

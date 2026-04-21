@@ -60,14 +60,36 @@ export function buildFormulaEntry(
       : [];
   const labels = normalizeLabels(rawLabels);
 
+  const rawValue = node.value;
+  let valueYaml: number | undefined;
+  let unitFromValue: string | undefined;
+
+  if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+    valueYaml = rawValue;
+  } else if (typeof rawValue === "string") {
+    const trimmed = rawValue.trim();
+    const match = trimmed.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-z%][A-Za-z0-9_%]*)$/);
+    if (match) {
+      valueYaml = Number(match[1]);
+      unitFromValue = match[2];
+    } else {
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) {
+        valueYaml = numeric;
+      }
+    }
+  }
+
+  const unit = typeof node.unit === "string" ? node.unit : unitFromValue;
+
   return {
     key,
-    unit: typeof node.unit === "string" ? node.unit : undefined,
+    unit,
     formula: typeof node.formula === "string" ? node.formula : undefined,
     steps: Array.isArray(node.steps) ? node.steps.map(String) : [],
     labels,
     revision: typeof node.revision === "string" ? node.revision : undefined,
-    valueYaml: Number.isFinite(Number(node.value)) ? Number(node.value) : undefined,
+    valueYaml,
     expanded: undefined,
     valueCalc: null,
     _filePath: path.relative(workspaceRoot, yamlPath),

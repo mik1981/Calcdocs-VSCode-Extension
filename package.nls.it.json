@@ -1,5 +1,5 @@
 {
-  "extension.description": "Excel nel codice sorgente del firmware & valutatore formule & sincronizzazione costanti C/C++ & controllo di coerenza - mostra i valori reali calcolati per trovare errori prima della compilazione, piu navigazione Vai alla definizione",
+  "extension.description": "Excel per il firmware: valuta istantaneamente macro, costanti e formule YAML in C/C++ con valori calcolati realtime direttamente in VS Code.",
 
   "config.title": "CalcDocs",
   "config.enabled": "Abilita o disabilita CalcDocs senza disinstallare l'estensione.",

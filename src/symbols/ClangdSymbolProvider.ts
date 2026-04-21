@@ -253,6 +253,20 @@ export class ClangdSymbolProvider {
       notes: [],
     };
 
+    if (output.location && output.location.uri.scheme === "file") {
+      try {
+        const defDoc = await vscode.workspace.openTextDocument(output.location.uri);
+        const lineText = defDoc.lineAt(output.location.range.start.line).text;
+        const unitMatch = lineText.match(/@unit=([a-zA-Z0-9_/]+)/);
+        if (unitMatch) {
+          output.unit = unitMatch[1];
+          output.fieldSources["unit"] = "clangd";
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
     if (output.type) {
       output.fieldSources.type = "clangd";
     }

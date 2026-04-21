@@ -19,7 +19,7 @@ export class FormulaHoverProvider implements vscode.HoverProvider {
     const formula = formulas.find(f => f.lineStart === pos.line);
     if (!formula?.expr) return;
 
-    const inferred = inferDimension(formula.expr, formulas);
+    const inferred = inferDimension(formula.expr, formulas, formula.unit);
     const declared = getUnitDim(formula.unit);
 
     let md = new vscode.MarkdownString();

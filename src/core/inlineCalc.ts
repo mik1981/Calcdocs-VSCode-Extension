@@ -3,6 +3,8 @@ import type { CalcDocsState } from "./state";
 import {
   getUnitSpec as getEngineUnitSpec,
   normalizeUnitToken as normalizeEngineUnitToken,
+  UNIT_SPECS as ENGINE_UNIT_SPECS,
+  UNIT_ALIASES as ENGINE_UNIT_ALIASES,
 } from "../engine/units";
 
 export type InlineCalcSeverity = "error" | "warning" | "info";
@@ -44,11 +46,13 @@ export type DimensionVector = {
   L: number;
   T: number;
   I: number;
+  K: number;
 };
 
 type UnitSpec = {
-  factor: number;
+  token: string;
   canonical: string;
+  factorToSi: number;
   dimension: DimensionVector;
 };
 
@@ -84,7 +88,7 @@ export type InlineCalcEvaluationOptions = {
   includeAssignments?: boolean;
 };
 
-const DIMENSIONLESS: DimensionVector = { M: 0, L: 0, T: 0, I: 0 };
+const DIMENSIONLESS: DimensionVector = { M: 0, L: 0, T: 0, I: 0, K: 0 };
 const EPSILON = 1e-9;
 
 const INLINE_ASSIGN_RX = /^@([A-Za-z_]\w*)\s*=\s*(.+)$/;
@@ -105,109 +109,8 @@ const FUNCTION_CALL_RX = /[A-Za-z_][A-Za-z0-9_]*\s*\(/;
 const NUMBER_RX = /^(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/;
 const IDENTIFIER_RX = /^[A-Za-z_][A-Za-z0-9_]*/;
 
-export const UNIT_SPECS = new Map<string, UnitSpec>([
-  ["s", { factor: 1, canonical: "s", dimension: { M: 0, L: 0, T: 1, I: 0 } }],
-  ["ms", { factor: 1e-3, canonical: "ms", dimension: { M: 0, L: 0, T: 1, I: 0 } }],
-  ["us", { factor: 1e-6, canonical: "us", dimension: { M: 0, L: 0, T: 1, I: 0 } }],
-  ["ns", { factor: 1e-9, canonical: "ns", dimension: { M: 0, L: 0, T: 1, I: 0 } }],
-  ["min", { factor: 60, canonical: "min", dimension: { M: 0, L: 0, T: 1, I: 0 } }],
-  ["h", { factor: 3600, canonical: "h", dimension: { M: 0, L: 0, T: 1, I: 0 } }],
-  ["in", { factor: 0.0254, canonical: "in", dimension: { M: 0, L: 1, T: 0, I: 0 } }],
-  ["ft", { factor: 0.3048, canonical: "ft", dimension: { M: 0, L: 1, T: 0, I: 0 } }],
-  ["yd", { factor: 0.9144, canonical: "yd", dimension: { M: 0, L: 1, T: 0, I: 0 } }],
-  ["mi", { factor: 1609.344, canonical: "mi", dimension: { M: 0, L: 1, T: 0, I: 0 } }],
-  ["mph", { factor: 1609.344 / 3600, canonical: "mph", dimension: { M: 0, L: 1, T: -1, I: 0 } }],
-  ["fps", { factor: 0.3048, canonical: "fps", dimension: { M: 0, L: 1, T: -1, I: 0 } }],
-  ["ips", { factor: 0.0254, canonical: "ips", dimension: { M: 0, L: 1, T: -1, I: 0 } }],
-  ["hz", { factor: 1, canonical: "Hz", dimension: { M: 0, L: 0, T: -1, I: 0 } }],
-  ["khz", { factor: 1e3, canonical: "kHz", dimension: { M: 0, L: 0, T: -1, I: 0 } }],
-  ["mhz", { factor: 1e6, canonical: "MHz", dimension: { M: 0, L: 0, T: -1, I: 0 } }],
-  ["ghz", { factor: 1e9, canonical: "GHz", dimension: { M: 0, L: 0, T: -1, I: 0 } }],
-  ["v", { factor: 1, canonical: "V", dimension: { M: 1, L: 2, T: -3, I: -1 } }],
-  ["mv", { factor: 1e-3, canonical: "mV", dimension: { M: 1, L: 2, T: -3, I: -1 } }],
-  ["kv", { factor: 1e3, canonical: "kV", dimension: { M: 1, L: 2, T: -3, I: -1 } }],
-  ["a", { factor: 1, canonical: "A", dimension: { M: 0, L: 0, T: 0, I: 1 } }],
-  ["ma", { factor: 1e-3, canonical: "mA", dimension: { M: 0, L: 0, T: 0, I: 1 } }],
-  ["ua", { factor: 1e-6, canonical: "uA", dimension: { M: 0, L: 0, T: 0, I: 1 } }],
-  ["ohm", { factor: 1, canonical: "Ohm", dimension: { M: 1, L: 2, T: -3, I: -2 } }],
-  ["kohm", { factor: 1e3, canonical: "kOhm", dimension: { M: 1, L: 2, T: -3, I: -2 } }],
-  ["mohm", { factor: 1e6, canonical: "MOhm", dimension: { M: 1, L: 2, T: -3, I: -2 } }],
-  ["w", { factor: 1, canonical: "W", dimension: { M: 1, L: 2, T: -3, I: 0 } }],
-  ["mw", { factor: 1e-3, canonical: "mW", dimension: { M: 1, L: 2, T: -3, I: 0 } }],
-  ["kw", { factor: 1e3, canonical: "kW", dimension: { M: 1, L: 2, T: -3, I: 0 } }],
-  ["f", { factor: 1, canonical: "F", dimension: { M: -1, L: -2, T: 4, I: 2 } }],
-  ["mf", { factor: 1e-3, canonical: "mF", dimension: { M: -1, L: -2, T: 4, I: 2 } }],
-  ["uf", { factor: 1e-6, canonical: "uF", dimension: { M: -1, L: -2, T: 4, I: 2 } }],
-  ["nf", { factor: 1e-9, canonical: "nF", dimension: { M: -1, L: -2, T: 4, I: 2 } }],
-  ["pf", { factor: 1e-12, canonical: "pF", dimension: { M: -1, L: -2, T: 4, I: 2 } }],
-  ["henry", { factor: 1, canonical: "H", dimension: { M: 1, L: 2, T: -2, I: -2 } }],
-  ["mhenry", { factor: 1e-3, canonical: "mH", dimension: { M: 1, L: 2, T: -2, I: -2 } }],
-  ["uhenry", { factor: 1e-6, canonical: "uH", dimension: { M: 1, L: 2, T: -2, I: -2 } }],
-  ["nhenry", { factor: 1e-9, canonical: "nH", dimension: { M: 1, L: 2, T: -2, I: -2 } }],
-  ["mh", { factor: 1e-3, canonical: "mH", dimension: { M: 1, L: 2, T: -2, I: -2 } }],
-  ["uh", { factor: 1e-6, canonical: "uH", dimension: { M: 1, L: 2, T: -2, I: -2 } }],
-  ["nh", { factor: 1e-9, canonical: "nH", dimension: { M: 1, L: 2, T: -2, I: -2 } }],
-  ["lb", { factor: 0.45359237, canonical: "lb", dimension: { M: 1, L: 0, T: 0, I: 0 } }],
-  ["oz", { factor: 0.028349523125, canonical: "oz", dimension: { M: 1, L: 0, T: 0, I: 0 } }],
-  ["lbf", { factor: 4.4482216152605, canonical: "lbf", dimension: { M: 1, L: 1, T: -2, I: 0 } }],
-  ["pa", { factor: 1, canonical: "Pa", dimension: { M: 1, L: -1, T: -2, I: 0 } }],
-  ["kpa", { factor: 1e3, canonical: "kPa", dimension: { M: 1, L: -1, T: -2, I: 0 } }],
-  ["bar", { factor: 1e5, canonical: "bar", dimension: { M: 1, L: -1, T: -2, I: 0 } }],
-  ["atm", { factor: 101325, canonical: "atm", dimension: { M: 1, L: -1, T: -2, I: 0 } }],
-  ["psi", { factor: 6894.757293168, canonical: "psi", dimension: { M: 1, L: -1, T: -2, I: 0 } }],
-  ["ksi", { factor: 6894757.293168, canonical: "ksi", dimension: { M: 1, L: -1, T: -2, I: 0 } }],
-  ["gal", { factor: 0.003785411784, canonical: "gal", dimension: { M: 0, L: 3, T: 0, I: 0 } }],
-  ["degf", { factor: 1, canonical: "degF", dimension: { M: 0, L: 0, T: 0, I: 0 } }],
-  ["%", { factor: 0.01, canonical: "%", dimension: { M: 0, L: 0, T: 0, I: 0 } }],
-]);
-
-const UNIT_ALIASES = new Map<string, string>([
-  ["sec", "s"],
-  ["secs", "s"],
-  ["second", "s"],
-  ["seconds", "s"],
-  ["mins", "min"],
-  ["minute", "min"],
-  ["minutes", "min"],
-  ["hr", "h"],
-  ["hrs", "h"],
-  ["hour", "h"],
-  ["hours", "h"],
-  ["volt", "v"],
-  ["volts", "v"],
-  ["amp", "a"],
-  ["amps", "a"],
-  ["ampere", "a"],
-  ["amperes", "a"],
-  ["ohms", "ohm"],
-  ["inch", "in"],
-  ["inches", "in"],
-  ["foot", "ft"],
-  ["feet", "ft"],
-  ["yard", "yd"],
-  ["yards", "yd"],
-  ["mile", "mi"],
-  ["miles", "mi"],
-  ["lbm", "lb"],
-  ["lbs", "lb"],
-  ["pound", "lb"],
-  ["pounds", "lb"],
-  ["ounce", "oz"],
-  ["ounces", "oz"],
-  ["gallon", "gal"],
-  ["gallons", "gal"],
-  ["pascal", "pa"],
-  ["pascals", "pa"],
-  ["kilopascal", "kpa"],
-  ["kilopascals", "kpa"],
-  ["kpa", "kpa"],
-  ["bars", "bar"],
-  ["atmosphere", "atm"],
-  ["atmospheres", "atm"],
-  ["fahrenheit", "degf"],
-  ["degf", "degf"],
-  ["deg_f", "degf"],
-]);
+export const UNIT_SPECS = ENGINE_UNIT_SPECS;
+export const UNIT_ALIASES = ENGINE_UNIT_ALIASES;
 
 function cloneDimension(value: DimensionVector): DimensionVector {
   return {
@@ -215,6 +118,7 @@ function cloneDimension(value: DimensionVector): DimensionVector {
     L: value.L,
     T: value.T,
     I: value.I,
+    K: value.K,
   };
 }
 
@@ -224,6 +128,7 @@ function addDimensions(left: DimensionVector, right: DimensionVector): Dimension
     L: left.L + right.L,
     T: left.T + right.T,
     I: left.I + right.I,
+    K: left.K + right.K,
   };
 }
 
@@ -233,6 +138,7 @@ function subtractDimensions(left: DimensionVector, right: DimensionVector): Dime
     L: left.L - right.L,
     T: left.T - right.T,
     I: left.I - right.I,
+    K: left.K - right.K,
   };
 }
 
@@ -242,6 +148,7 @@ function scaleDimensions(value: DimensionVector, exponent: number): DimensionVec
     L: value.L * exponent,
     T: value.T * exponent,
     I: value.I * exponent,
+    K: value.K * exponent,
   };
 }
 
@@ -250,8 +157,37 @@ export function dimensionsEqual(left: DimensionVector, right: DimensionVector): 
     Math.abs(left.M - right.M) < EPSILON &&
     Math.abs(left.L - right.L) < EPSILON &&
     Math.abs(left.T - right.T) < EPSILON &&
-    Math.abs(left.I - right.I) < EPSILON
+    Math.abs(left.I - right.I) < EPSILON &&
+    Math.abs(left.K - right.K) < EPSILON
   );
+}
+
+/**
+ * Costruisce una mappa delle dimensioni per tutte le variabili note nello stato.
+ * Include sia i simboli C/C++ con @unit= che le formule YAML con unit:.
+ */
+export function buildVariableDimensions(state: CalcDocsState): Map<string, DimensionVector> {
+  const variableDimensions = new Map<string, DimensionVector>();
+
+  // Dimensioni dai simboli C/C++ estratti (commenti @unit=)
+  for (const [name, unitToken] of state.symbolUnits) {
+    const spec = resolveUnitSpec(unitToken);
+    if (spec) {
+      variableDimensions.set(name, cloneDimension(spec.dimension));
+    }
+  }
+
+  // Dimensioni dalle formule YAML
+  for (const entry of state.formulaIndex.values()) {
+    if (entry.unit) {
+      const spec = resolveUnitSpec(entry.unit);
+      if (spec) {
+        variableDimensions.set(entry.key, cloneDimension(spec.dimension));
+      }
+    }
+  }
+
+  return variableDimensions;
 }
 
 function isDimensionless(value: DimensionVector): boolean {
@@ -284,6 +220,9 @@ export function formatDimensionVector(value: DimensionVector | null): string {
   if (Math.abs(value.I) >= EPSILON) {
     parts.push(`I^${formatDimensionExponent(value.I)}`);
   }
+  if (Math.abs(value.K) >= EPSILON) {
+    parts.push(`K^${formatDimensionExponent(value.K)}`);
+  }
 
   return parts.length > 0 ? parts.join(" * ") : "1";
 }
@@ -299,26 +238,7 @@ export function normalizeUnitToken(rawUnit: string): string {
 
 function resolveUnitSpec(rawUnit: string): UnitSpec | undefined {
   const normalized = normalizeUnitToken(rawUnit);
-  const local = UNIT_SPECS.get(normalized);
-  if (local) {
-    return local;
-  }
-
-  const engine = getEngineUnitSpec(normalized);
-  if (!engine) {
-    return undefined;
-  }
-
-  return {
-    factor: engine.factorToSi,
-    canonical: engine.canonical,
-    dimension: {
-      M: engine.dimension.M,
-      L: engine.dimension.L,
-      T: engine.dimension.T,
-      I: engine.dimension.I,
-    },
-  };
+  return getEngineUnitSpec(normalized);
 }
 
 export function parseExpressionUnit(raw: string): { expression: string; outputUnit?: string } {
@@ -591,7 +511,7 @@ function replaceInlineQuantityLiterals(expression: string): string {
         return full;
       }
 
-      return String(numeric * spec.factor);
+      return String(numeric * spec.factorToSi);
     }
   );
 }
@@ -937,10 +857,11 @@ function evaluateInlineExpression(
 
   if (preview.error?.kind === "cast-overflow") {
     const overflow = preview.error.overflow;
+    const castType = overflow?.castType || "unknown";
     return {
       value: null,
       resolvedExpression: preview.expanded || normalizedExpression,
-      error: `cast overflow (${overflow.castType})`,
+      error: `cast overflow (${castType})`,
     };
   }
 
@@ -966,7 +887,7 @@ function formatWithOutputUnit(
     return `${formatPreviewNumber(state, value)} ${outputUnit}`;
   }
 
-  const converted = value / spec.factor;
+  const converted = value / spec.factorToSi;
   return `${formatPreviewNumber(state, converted)} ${spec.canonical}`;
 }
 
@@ -1079,6 +1000,11 @@ function parseInlineCommands(documentText: string, languageId?: string): InlineC
     for (const instruction of instructions) {
       const parsedIgnore = parseIgnoreDirectives(instruction);
       if (!parsedIgnore.cleaned) {
+        continue;
+      }
+
+      // Escludi tag di metadati come @unit= che non sono espressioni calcolabili
+      if (parsedIgnore.cleaned.startsWith("@unit=")) {
         continue;
       }
 
@@ -1281,7 +1207,7 @@ export function evaluateInlineCalcs(
   const includeSuppressed = options.includeSuppressed ?? false;
   const includeAssignments = options.includeAssignments ?? true;
   const variables = new Map<string, number>();
-  const variableDimensions = new Map<string, DimensionVector>();
+  const variableDimensions = buildVariableDimensions(state);
   const commands = parseInlineCommands(documentText, languageId);
   const results: InlineCalcResult[] = [];
 

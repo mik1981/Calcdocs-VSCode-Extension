@@ -1,0 +1,15 @@
+current:
+  value: 2
+  unit: A
+
+vin:
+  value: 24
+  unit: V
+
+power:
+  formula: current * vin
+  unit: W
+
+NTC_R_25:
+  formula: csv("data/ntc_10k.csv", "25", "temp_c", "res_ohm")
+  unit: degc

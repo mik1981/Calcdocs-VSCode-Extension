@@ -7,6 +7,7 @@ export type OutlineFormula = {
   value?: number; 
   lineStart: number;
   lineEnd: number;
+  _filePath?: string;
 };
 
 /**
@@ -17,7 +18,7 @@ export type OutlineFormula = {
    value?: number
    example?: {key: val}
  */
-export function parseFormulaDocument(lines: string[]): OutlineFormula[] {
+export function parseFormulaDocument(lines: string[], filePath?: string): OutlineFormula[] {
   const formulas: OutlineFormula[] = [];
   let i = 0;
 
@@ -69,7 +70,7 @@ export function parseFormulaDocument(lines: string[]): OutlineFormula[] {
 
       // Includi anche formule senza expr (costanti pure con solo value)
       if (expr || value !== undefined) {
-        formulas.push({ id, expr, desc, example, unit, value, lineStart, lineEnd: i - 1 });
+        formulas.push({ id, expr, desc, example, unit, value, lineStart, lineEnd: i - 1, _filePath: filePath });
       }
     } else {
       i++;

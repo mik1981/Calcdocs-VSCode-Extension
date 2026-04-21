@@ -126,16 +126,32 @@ function buildHeaderIndex(rows: string[][]): Map<string, number> {
 
 function registerCsvTable(
   tables: CsvTableMap,
-  fileName: string,
+  absolutePath: string,
   table: CsvTable
 ): void {
-  const normalized = normalizeCsvTableKey(fileName);
+  const normalized = normalizeCsvTableKey(absolutePath);
+  const fileName = path.basename(absolutePath);
+  const normalizedName = normalizeCsvTableKey(fileName);
+  
   const withoutExt = normalized.endsWith(".csv")
     ? normalized.slice(0, -4)
     : normalized;
+  
+  const nameWithoutExt = normalizedName.endsWith(".csv")
+    ? normalizedName.slice(0, -4)
+    : normalizedName;
 
+  // Primary key: absolute path
   tables.set(normalized, table);
   tables.set(withoutExt, table);
+  
+  // Fallback keys: just the filename (backward compatibility if not ambiguous)
+  if (!tables.has(normalizedName)) {
+    tables.set(normalizedName, table);
+  }
+  if (!tables.has(nameWithoutExt)) {
+    tables.set(nameWithoutExt, table);
+  }
 }
 
 /**
@@ -145,6 +161,8 @@ function registerCsvTable(
 export async function loadAdjacentCsvTables(
   yamlPath: string
 ): Promise<CsvTableMap> {
+  console.groupCollapsed(`[CalcDocs-CSV] 🔍 Loading tables near: ${yamlPath}`);
+  
   const tables: CsvTableMap = new Map<string, CsvTable>();
   const yamlDirectory = path.dirname(yamlPath);
 
@@ -153,10 +171,15 @@ export async function loadAdjacentCsvTables(
     entries = (await fsp.readdir(yamlDirectory, {
       withFileTypes: true,
     })) as Dirent[];
-  } catch {
+    
+    console.log(`📁 Found ${entries.length} entries`);
+  } catch (err) {
+    console.log(`❌ Cannot read directory: ${yamlDirectory}`);
+    console.groupEnd();
     return tables;
   }
 
+  let csvCount = 0;
   for (const entry of entries) {
     if (!entry.isFile()) {
       continue;
@@ -166,19 +189,23 @@ export async function loadAdjacentCsvTables(
     if (!name.toLowerCase().endsWith(".csv")) {
       continue;
     }
+    csvCount++;
 
     const absolutePath = path.join(yamlDirectory, name);
+    console.log(`📄 Processing: ${name}`);
 
     let csvText = "";
     try {
       csvText = await fsp.readFile(absolutePath, "utf8");
-    } catch {
+    } catch (err) {
+      console.log(`  ❌ Read error: ${err}`);
       continue;
     }
 
     const delimiter = detectDelimiter(csvText);
     const rows = parseCsvRows(csvText, delimiter);
     if (rows.length === 0) {
+      console.log(`  ❌ Empty after parse`);
       continue;
     }
 
@@ -188,8 +215,55 @@ export async function loadAdjacentCsvTables(
       headerIndex: buildHeaderIndex(rows),
     };
 
-    registerCsvTable(tables, name, table);
+    registerCsvTable(tables, absolutePath, table);
+    console.log(`  ✅ Loaded: ${rows.length-1} data rows`);
   }
+  
+  console.log(`📊 Total tables loaded: ${tables.size}`);
+  console.groupEnd();
+  return tables;
+}
 
+/**
+ * Loads all CSV files from the provided file list.
+ */
+export async function loadWorkspaceCsvTables(
+  csvFiles: string[]
+): Promise<CsvTableMap> {
+  console.groupCollapsed(`[CalcDocs-CSV] 🔍 Loading ${csvFiles.length} workspace tables`);
+  
+  const tables: CsvTableMap = new Map<string, CsvTable>();
+
+  for (const absolutePath of csvFiles) {
+    const name = path.basename(absolutePath);
+    console.log(`📄 Processing: ${name} (${absolutePath})`);
+
+    let csvText = "";
+    try {
+      csvText = await fsp.readFile(absolutePath, "utf8");
+    } catch (err) {
+      console.log(`  ❌ Read error: ${err}`);
+      continue;
+    }
+
+    const delimiter = detectDelimiter(csvText);
+    const rows = parseCsvRows(csvText, delimiter);
+    if (rows.length === 0) {
+      console.log(`  ❌ Empty after parse`);
+      continue;
+    }
+
+    const table: CsvTable = {
+      fileName: name,
+      rows,
+      headerIndex: buildHeaderIndex(rows),
+    };
+
+    registerCsvTable(tables, absolutePath, table);
+    console.log(`  ✅ Loaded: ${rows.length-1} data rows`);
+  }
+  
+  console.log(`📊 Total tables loaded: ${tables.size}`);
+  console.groupEnd();
   return tables;
 }

@@ -23,6 +23,7 @@ export type CollectedCppSymbols = {
   functionDefines: Map<string, FunctionMacroDefinition>;
   defineVariants: Map<string, SymbolConditionalDefinition[]>;
   consts: Map<string, number>;
+  units: Map<string, string>;
   locations: Map<string, SymbolDefinitionLocation>;
 };
 
@@ -59,6 +60,7 @@ const ENDIF_RX = /^\s*#\s*endif\b/;
 const UNDEF_RX = /^\s*#\s*undef\s+([A-Za-z_]\w*)\b/;
 const CONTROL_FLOW_KEYWORD_RX =
   /^(?:if|else|for|while|switch|case|return|goto|do)\b/;
+const UNIT_COMMENT_RX = /@unit=([a-zA-Z0-9^*/_%-]+)/;
 
 /** Regex per catturare #include "file" o <file> */
 const INCLUDE_RX = /^\s*#include\s+["<]([^">]+)[">]/i;
@@ -810,6 +812,7 @@ export async function collectDefinesAndConsts(
   const functionDefines = new Map<string, FunctionMacroDefinition>();
   const defineVariants = new Map<string, SymbolConditionalDefinition[]>();
   const consts = new Map<string, number>();
+  const units = new Map<string, string>();
   const locations = new Map<string, SymbolDefinitionLocation>();
   const globallyDefinedSymbols = new Set<string>();
 
@@ -892,6 +895,11 @@ export async function collectDefinesAndConsts(
           // Allow overwrite in case later file redefines
           defines.set(name, expr);
           
+          const unitMatch = line.match(UNIT_COMMENT_RX);
+          if (unitMatch) {
+            units.set(name, unitMatch[1]);
+          }
+
           try {
             consts.set(name, safeEval(expr));
           } catch {}
@@ -915,6 +923,12 @@ export async function collectDefinesAndConsts(
 
           const { name, expr } = parsedValueDeclaration;
           defines.set(name, expr);
+
+          const unitMatch = line.match(UNIT_COMMENT_RX);
+          if (unitMatch) {
+            units.set(name, unitMatch[1]);
+          }
+
           try {
             consts.set(name, safeEval(expr));
           } catch {}
@@ -1129,6 +1143,11 @@ export async function collectDefinesAndConsts(
               defines.set(name, expr);
             }
             
+            const unitMatch = line.match(UNIT_COMMENT_RX);
+            if (unitMatch) {
+              units.set(name, unitMatch[1]);
+            }
+
             defineConditions.set(name, definitionCondition);
 
             const location: SymbolDefinitionLocation = {
@@ -1162,6 +1181,11 @@ export async function collectDefinesAndConsts(
 
             if (!defines.has(name)) {
               defines.set(name, expr);
+            }
+
+            const unitMatch = line.match(UNIT_COMMENT_RX);
+            if (unitMatch) {
+              units.set(name, unitMatch[1]);
             }
 
             defineConditions.set(name, definitionCondition);
@@ -1207,6 +1231,7 @@ export async function collectDefinesAndConsts(
     functionDefines,
     defineVariants: dedupedDefineVariants,
     consts,
+    units,
     locations
   };
 }

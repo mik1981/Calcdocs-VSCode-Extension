@@ -1,0 +1,7 @@
+[
+  {
+    "directory": ".",
+    "command": "clang -c  -std=c99 -D__FORMULA_MACROS__=\"// ----------------------------\n// FORMULAS FROM: formulas.yaml\n// ----------------------------\" input.c",
+    "file": "input.c"
+  }
+]

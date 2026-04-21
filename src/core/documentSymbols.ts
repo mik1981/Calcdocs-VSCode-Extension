@@ -2,6 +2,7 @@ import { parseCppSymbolDefinition, type CppSymbolDefinition } from "./cppParser"
 import { updateBraceDepth } from "../utils/braceDepth";
 
 export const DEFINE_DIRECTIVE_RX = /^\s*#\s*define\b/;
+const CONTROL_FLOW_RX = /^\s*(if|while|for|switch|return|do)\b/;
 
 export type DocumentSymbolDefinition = {
   line: number;
@@ -35,15 +36,50 @@ export function collectDocumentSymbolDefinitions(
     }
 
     const isDefineLine = DEFINE_DIRECTIVE_RX.test(lineText);
-    const parsed = parseCppSymbolDefinition(lineText);
+    const isControlFlow = CONTROL_FLOW_RX.test(lineText);
 
-    if (parsed) {
-      definitions.push({
-        line: startLine,
-        lineText,
-        isDefineLine,
-        parsed,
-      });
+    if (isDefineLine) {
+      const parsed = parseCppSymbolDefinition(lineText);
+      if (parsed) {
+        definitions.push({
+          line: startLine,
+          lineText,
+          isDefineLine: true,
+          parsed,
+        });
+      }
+    } else if (isControlFlow) {
+      // Best-effort expression extraction for control flow lines
+      const exprMatch = lineText.match(/^[^(]*\((.*)\)[^)]*$/);
+      const expr = exprMatch ? exprMatch[1].trim() : "";
+      if (expr) {
+        definitions.push({
+          line: startLine,
+          lineText,
+          isDefineLine: false,
+          parsed: {
+            name: "", // anonymous expression
+            expr: expr,
+          },
+        });
+      }
+    } else {
+      // Handle potential multiple declarations on one line (e.g. "int a=1; int b=2;")
+      const segments = lineText.split(";");
+      for (const segment of segments) {
+        const trimmed = segment.trim();
+        if (!trimmed) continue;
+        
+        const parsed = parseCppSymbolDefinition(trimmed + ";");
+        if (parsed) {
+          definitions.push({
+            line: startLine,
+            lineText: segment + ";",
+            isDefineLine: false,
+            parsed,
+          });
+        }
+      }
     }
 
     braceDepth = updateBraceDepth(braceDepth, lineText);

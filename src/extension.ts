@@ -123,17 +123,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   coloredOutput.info(localize("output.activate"));
 
   // Ottiene la cartella root del workspace aperto
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  let workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  // Removed early return - allow activation without workspace for commands like openTestFolder
+  // Will defer analysis/providers until workspace opens
   if (!workspaceRoot) {
-    coloredOutput.error(localize("output.noWorkspace"));
-    return;
+    coloredOutput.warn(localize("output.noWorkspace"));
   }
 
   // Carica la configurazione dell'estensione
   let config = getConfig();
 
   // Crea lo stato iniziale dell'estensione per il workspace
-  const state = createCalcDocsState(workspaceRoot, coloredOutput);
+  const state = createCalcDocsState(workspaceRoot || process.cwd(), coloredOutput); // Fallback to cwd if no workspace
   applyConfigToState(state, config);
 
   // Create diagnostics collection for YAML errors/discrepancies
@@ -171,7 +172,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const formulaRegistry = new FormulaRegistry();
   const formulaOutlineProvider = new FormulaOutlineProvider(
     formulaRegistry,
-    () => state.symbolValues   // ← lazy getter: always reflects latest analysis
+    () => state.symbolValues,   // ← lazy getter: always reflects latest analysis
+    () => state.symbolUnits,
+    () => state.csvTables
   );
 
   context.subscriptions.push(formulaOutlineProvider);
@@ -329,8 +332,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   resourceMonitor.start();
   context.subscriptions.push(resourceMonitor);
 
-  // Esegue l'analisi iniziale al caricamento dell'estensione
-  await runAnalysisAndRefreshUi();
+  // Defer initial analysis until workspace opens
+  if (workspaceRoot) {
+    await runAnalysisAndRefreshUi();
+  } else {
+    // Listen for first workspace open
+    const disposable = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (workspaceRoot) {
+        state.workspaceRoot = workspaceRoot;
+        disposable.dispose();
+        runAnalysisAndRefreshUi();
+      }
+    });
+    context.subscriptions.push(disposable);
+  }
 
 // Registra i provider per hover, definition e CodeLens
   vscode.languages.registerFoldingRangeProvider('yaml', formulaOutlineProvider);
@@ -516,4 +532,3 @@ export async function deactivate(): Promise<void> {
   runtimeStatusBar?.dispose();
   await clangdService?.stop();
 }
-

@@ -1,66 +1,26 @@
 // dimensionEvaluator.ts
 
 import type { OutlineFormula } from './formulaParser';
+import {
+  type DimensionVector as Dim,
+  dimensionsEqual as sameDim,
+  addDimensions as addDim,
+  subtractDimensions as subDim,
+  getUnitSpec,
+} from '../engine/units';
 
 // -------------------- DIM TYPE --------------------
 
-export type Dim = {
-  V: number;
-  I: number;
-  R: number;
-  T: number;
-  F: number;
-  P: number;
-  C: number;
-  L: number;
-  A: number;
-};
+export { type Dim };
 
-export const ZERO_DIM: Dim = { V:0,I:0,R:0,T:0,F:0,P:0,C:0,L:0,A:0 };
-
-function clone(d: Dim): Dim {
-  return { ...d };
-}
-
-export function addDim(a: Dim, b: Dim): Dim {
-  const out = clone(ZERO_DIM);
-  for (const k in out) out[k as keyof Dim] = a[k as keyof Dim] + b[k as keyof Dim];
-  return out;
-}
-
-export function subDim(a: Dim, b: Dim): Dim {
-  const out = clone(ZERO_DIM);
-  for (const k in out) out[k as keyof Dim] = a[k as keyof Dim] - b[k as keyof Dim];
-  return out;
-}
-
-export function sameDim(a: Dim, b: Dim): boolean {
-  return Object.keys(a).every(k => a[k as keyof Dim] === b[k as keyof Dim]);
-}
+export const ZERO_DIM: Dim = { M:0, L:0, T:0, I:0, K:0 };
 
 // -------------------- UNIT → DIM --------------------
 
-const BASE_UNIT_DIM = new Map<string, Dim>([
-  ['v',   { ...ZERO_DIM, V:1 }],
-  ['a',   { ...ZERO_DIM, I:1 }],
-  ['ohm', { ...ZERO_DIM, R:1 }],
-  ['s',   { ...ZERO_DIM, T:1 }],
-  ['hz',  { ...ZERO_DIM, F:1 }],
-  ['w',   { ...ZERO_DIM, P:1 }],
-  ['f',   { ...ZERO_DIM, C:1 }],
-  ['h',   { ...ZERO_DIM, L:1 }],
-  ['rad', { ...ZERO_DIM, A:1 }],
-  ['deg', { ...ZERO_DIM, A:1 }],
-]);
-
-function stripPrefix(u: string): string {
-  return u.replace(/^(m|k|u|n|p|g)/, '');
-}
-
 export function getUnitDim(unit?: string): Dim | null {
   if (!unit) return null;
-  const base = stripPrefix(unit.toLowerCase());
-  return BASE_UNIT_DIM.get(base) ?? null;
+  const spec = getUnitSpec(unit);
+  return spec ? spec.dimension : null;
 }
 
 // -------------------- C SYMBOL DIM PROPAGATION --------------------
@@ -91,7 +51,9 @@ type Token =
   | { type: 'paren'; v: string };
 
 function tokenize(expr: string): Token[] {
-  const regex = /([A-Z_][A-Z0-9_]*)|(sqrt|sin|cos|tan|pow)|(\d+(\.\d+)?)|([+\-*/(),])/gi;
+  // const regex = /([A-Z_][A-Z0-9_]*)|(sqrt|sin|cos|tan|pow)|(\d+(\.\d+)?)|([+\-*/(),])/gi;
+  const regex = /([A-Z_][A-Z0-9_]*)|(csv|lookup|table|sqrt|sin|cos|tan|pow)|(\d+(\.\d+)?)|([+\-*/(),])/gi;
+
   const tokens: Token[] = [];
 
   let m;
@@ -108,18 +70,15 @@ function tokenize(expr: string): Token[] {
 // -------------------- FUNCTION RULES --------------------
 
 function applyFunction(name: string, args: Dim[]): Dim {
+  const d = args[0];
   switch (name) {
     case 'sqrt':
-      return Object.fromEntries(
-        Object.entries(args[0]).map(([k, v]) => [k, v / 2])
-      ) as Dim;
+      return { M: d.M / 2, L: d.L / 2, T: d.T / 2, I: d.I / 2, K: d.K / 2 };
 
     case 'pow':
       // pow(x, n) → dimension x^n
       const power = args[1] ? 2 : 1; // fallback
-      return Object.fromEntries(
-        Object.entries(args[0]).map(([k, v]) => [k, v * power])
-      ) as Dim;
+      return { M: d.M * power, L: d.L * power, T: d.T * power, I: d.I * power, K: d.K * power };
 
     case 'sin':
     case 'cos':
@@ -135,7 +94,8 @@ function applyFunction(name: string, args: Dim[]): Dim {
 
 export function inferDimension(
   expr: string,
-  formulas: OutlineFormula[]
+  formulas: OutlineFormula[],
+  declaredUnit?: string
 ): { dim: Dim | null; error?: string } {
 
   const tokens = tokenize(expr);
@@ -164,6 +124,8 @@ export function inferDimension(
   }
 
   try {
+    const EXTERNAL_FUNCS = new Set(['csv', 'lookup', 'table']);
+
     for (const t of tokens) {
       if (t.type === 'var') stack.push(getVarDim(t.v));
       else if (t.type === 'num') stack.push(ZERO_DIM);
@@ -172,9 +134,19 @@ export function inferDimension(
         ops.push(t.v);
       }
       else if (t.type === 'func') {
-        const arg = stack.pop();
-        if (!arg) continue;
-        stack.push(applyFunction(t.v, [arg]));
+        if (EXTERNAL_FUNCS.has(t.v.toLowerCase())) {
+          const dim = declaredUnit
+            ? getUnitDim(declaredUnit)
+            : ZERO_DIM;
+
+          stack.push(dim ?? ZERO_DIM);
+        } else {
+          const arg = stack.pop();
+          if (arg) stack.push(applyFunction(t.v, [arg]));
+        }
+        // const arg = stack.pop();
+        // if (!arg) continue;
+        // stack.push(applyFunction(t.v, [arg]));
       }
     }
 

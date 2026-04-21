@@ -165,79 +165,21 @@ export function registerCommands({
     }),
 
      vscode.commands.registerCommand("calcdocs.openTestFolder", async () => {
-       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-       let testFolderUri: vscode.Uri | undefined;
-       let testFileUri: vscode.Uri | undefined;
-
-       // Determine test folder location (workspace or extension)
-       if (workspaceRoot) {
-         const workspaceTestFolder = vscode.Uri.file(path.join(workspaceRoot, "test"));
-         const workspaceTestFile = vscode.Uri.file(path.join(workspaceRoot, "test", "src", "test.c"));
-         try {
-           await fsp.access(workspaceTestFolder.fsPath);
-           testFolderUri = workspaceTestFolder;
-           try {
-             await fsp.access(workspaceTestFile.fsPath);
-             testFileUri = workspaceTestFile;
-           } catch {
-             // test.c not found in workspace, will try extension
-           }
-         } catch {
-           // test folder not in workspace
-         }
-       }
-
-       // Fallback to extension test folder
-       if (!testFolderUri) {
-         const extensionTestFolder = vscode.Uri.joinPath(context.extensionUri, "test");
-         const extensionTestFile = vscode.Uri.joinPath(context.extensionUri, "test", "src", "test.c");
-         try {
-           await fsp.access(extensionTestFolder.fsPath);
-           testFolderUri = extensionTestFolder;
-           try {
-             await fsp.access(extensionTestFile.fsPath);
-             testFileUri = extensionTestFile;
-           } catch {
-             // test.c not found in extension
-           }
-         } catch {
-           // test folder not found in extension
-         }
-       }
-
-       if (!testFolderUri) {
-         await vscode.window.showWarningMessage(
-           "CalcDocs test folder not found."
-         );
+       // Open examples folder in a COMPLETELY NEW VS CODE WINDOW (fresh workspace)
+       // Independent of workspaceRoot - works at startup
+       const examplesFolderUri = vscode.Uri.joinPath(context.extensionUri, "examples");
+       
+       try {
+         await fsp.access(examplesFolderUri.fsPath);
+       } catch {
+         await vscode.window.showWarningMessage("CalcDocs examples folder not found.");
+        state.output.warn("openTestFolder: examples folder access failed");
          return;
        }
 
-       // Check if test folder is already a workspace folder
-       const existingFolder = vscode.workspace.workspaceFolders?.find(
-         folder => folder.uri.fsPath === testFolderUri!.fsPath
-       );
-
-       if (!existingFolder) {
-         // Add test folder as a workspace folder
-         const success = vscode.workspace.updateWorkspaceFolders(
-           vscode.workspace.workspaceFolders?.length ?? 0,
-           0,
-           { uri: testFolderUri, name: "CalcDocs Test" }
-         );
-
-         if (!success) {
-           await vscode.window.showWarningMessage(
-             "Failed to add test folder to workspace."
-           );
-           return;
-         }
-       }
-
-       // Open test.c if available
-       if (testFileUri) {
-         const document = await vscode.workspace.openTextDocument(testFileUri);
-         await vscode.window.showTextDocument(document, { preview: false });
-       }
+       // This is equivalent to File -> Open Folder, opens in a new separate window
+       await vscode.commands.executeCommand('vscode.openFolder', examplesFolderUri, true);
+       state.output.info("openTestFolder: Opened examples/ in new window");
      }),
 
      vscode.commands.registerCommand("calcdocs.generateCompileCommands", async () => {
@@ -255,13 +197,13 @@ export function registerCommands({
          title: "Generating compile_commands.json",
          cancellable: false
        }, async (progress) => {
-           // 1. Fase di scansione
-           progress.report({ message: "Scanning project files..." });
+          // 1. Fase di scansione
+          progress.report({ message: "Scanning project files..." });
 
           const extensionConfig = getConfig();
           const genConfig: Configuration = {
             projectRoot: workspaceRoot,
-            pathMode: "relative",
+            // pathMode: "relative",
             exclusions: [
               ...extensionConfig.ignoredDirs,
               ".git",

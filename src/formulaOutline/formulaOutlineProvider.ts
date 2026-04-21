@@ -3,6 +3,8 @@ import { DecorationRangeBehavior } from 'vscode';
 import type { TextDocument } from 'vscode';
 import { OutlineFormula } from './formulaParser';
 import { FormulaRegistry } from './formulaRegistry';
+import { createCsvLookupResolver } from '../engine/csvLookup';
+import type { CsvTableMap } from '../core/csvTables';
 import {
   buildFormulaSymbolTable,
   resolveFormulaValue,
@@ -14,6 +16,35 @@ import {
   getUnitSpec, 
   suggestUnits,
 } from './formulaEvaluator';
+import { getUnitSpec as getEngineUnitSpec } from "../engine/units";
+
+export function normalizeGhostUnitLabel(rawUnit?: string): string | undefined {
+  if (!rawUnit) {
+    return undefined;
+  }
+
+  const cleaned = rawUnit.trim().replace(/^\[+/, "").replace(/\]+$/, "").trim();
+  if (!cleaned) {
+    return undefined;
+  }
+
+  const spec = getEngineUnitSpec(cleaned);
+  return spec?.canonical ?? cleaned;
+}
+
+export function formatGhostParamEntry(name: string, value: number, rawUnit?: string): string {
+  const valueText = `${name}=${formatGhostNumber(value)}`;
+  const unitText = normalizeGhostUnitLabel(rawUnit);
+  if (!unitText) {
+    return valueText;
+  }
+
+  if (/\[[^\]]+\]\s*$/.test(valueText)) {
+    return valueText;
+  }
+
+  return `${valueText} [${unitText}]`;
+}
 
 export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
   private foldingRanges = new WeakMap<TextDocument, vscode.FoldingRange[]>();
@@ -91,13 +122,23 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
    * Pass `() => state.symbolValues` from extension.ts.
    */
   private _getSymbolValues: () => Map<string, number>;
+  private _getSymbolUnits: () => Map<string, string>;
+
+  /**
+   * Optional getter for CSV tables from state.csvTables.
+   */
+  private _getCsvTables: () => CsvTableMap;
 
   constructor(
     registry: FormulaRegistry,
-    getSymbolValues?: () => Map<string, number>
+    getSymbolValues?: () => Map<string, number>,
+    getSymbolUnits?: () => Map<string, string>,
+    getCsvTables?: () => CsvTableMap
   ) {
     this._registry = registry;
     this._getSymbolValues = getSymbolValues ?? (() => new Map());
+    this._getSymbolUnits = getSymbolUnits ?? (() => new Map());
+    this._getCsvTables = getCsvTables ?? (() => new Map());
 
     vscode.workspace.onDidChangeTextDocument(this.onDocumentChanged, this);
     vscode.workspace.onDidOpenTextDocument(this.onDocumentOpened, this);
@@ -202,7 +243,19 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
     const missingVarDecos: vscode.DecorationOptions[] = [];
 
     const cSymbols = this._getSymbolValues();
-    const symbolTable = buildFormulaSymbolTable(formulas, cSymbols);
+    const cSymbolUnits = this._getSymbolUnits();
+    const csvTables = this._getCsvTables();
+    const lookupResolver = createCsvLookupResolver(csvTables, editor.document.uri.fsPath);
+    const formulaUnitsById = new Map<string, string>();
+    for (const item of formulas) {
+      const normalizedUnit = normalizeGhostUnitLabel(item.unit);
+      if (!normalizedUnit) {
+        continue;
+      }
+      formulaUnitsById.set(item.id, normalizedUnit);
+    }
+
+    const symbolTable = buildFormulaSymbolTable(formulas, cSymbols, lookupResolver);
 
     const mathFunctions = new Set(
       Object.keys(MATH_SCOPE).map(k => k.toLowerCase())
@@ -213,7 +266,7 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
 
       // resolveFormulaValue returns the raw SI-unit value.
       // Unit scaling to the formula's `unit:` field is applied below at display time.
-      const evalResult = resolveFormulaValue(formula, symbolTable, cSymbols);
+      const evalResult = resolveFormulaValue(formula, symbolTable, cSymbols, lookupResolver);
 
       const hasExpr = !!formula.expr;
       const hasExternal = /(csv|table|lookup)/i.test(formula.expr || '');
@@ -398,9 +451,10 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
             symbolTable.get(sym) ??
             cSymbols.get(sym) ??
             null;
+          const symUnit = formulaUnitsById.get(sym) ?? cSymbolUnits.get(sym);
 
           if (symValue !== null && symValue !== undefined) {
-            varEntries.push(`${sym}=${formatGhostNumber(symValue)}`);
+            varEntries.push(formatGhostParamEntry(sym, symValue, symUnit));
           } else {
             varEntries.push(`${sym}=?`);
           }

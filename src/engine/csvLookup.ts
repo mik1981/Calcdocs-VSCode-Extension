@@ -1,5 +1,6 @@
 import type { CsvTable, CsvTableMap } from "../core/csvTables";
 import { normalizeCsvTableKey } from "../core/csvTables";
+import { createQuantity, type Quantity } from "./units";
 
 type CsvInterpolationMode = "none" | "linear" | "nearest";
 
@@ -26,13 +27,43 @@ function parseNumericCell(rawValue: string): number | null {
 
 function resolveCsvTable(
   csvTables: CsvTableMap | undefined,
-  tableName: string
+  tableName: string,
+  yamlPath?: string
 ): CsvTable | undefined {
+  console.groupCollapsed(`[CalcDocs-CSV] 🎯 Resolving table: "${tableName}" (YAML: ${yamlPath ?? 'none'})`);
+  
   if (!csvTables) {
+    console.log('❌ No tables available');
+    console.groupEnd();
     return undefined;
   }
 
-  const normalized = normalizeCsvTableKey(tableName);
+  const normalizedInput = normalizeCsvTableKey(tableName);
+  
+  // 1. If absolute path or verbatim match
+  let table = csvTables.get(normalizedInput);
+  if (table) {
+    console.log(`✅ FOUND by verbatim match: ${table.fileName}`);
+    console.groupEnd();
+    return table;
+  }
+
+  // 2. Resolve relative to YAML directory
+  if (yamlPath) {
+    const yamlDir = yamlPath.replace(/\\/g, "/").split("/").slice(0, -1).join("/");
+    const resolvedPath = yamlDir ? `${yamlDir}/${normalizedInput}` : normalizedInput;
+    const normalizedResolved = normalizeCsvTableKey(resolvedPath);
+    
+    table = csvTables.get(normalizedResolved);
+    if (table) {
+      console.log(`✅ FOUND by relative path: ${table.fileName}`);
+      console.groupEnd();
+      return table;
+    }
+  }
+
+  // 3. Fallback: Basename variants (backward compatibility)
+  const normalized = normalizedInput;
   const normalizedWithoutExt = normalized.endsWith(".csv")
     ? normalized.slice(0, -4)
     : normalized;
@@ -42,12 +73,26 @@ function resolveCsvTable(
     ? basename.slice(0, -4)
     : basename;
 
-  return (
-    csvTables.get(normalized) ??
-    csvTables.get(normalizedWithoutExt) ??
-    csvTables.get(basename) ??
-    csvTables.get(basenameWithoutExt)
-  );
+  console.log('🔑 Variants tried:', [
+    `full: "${normalized}"`,
+    `no-ext: "${normalizedWithoutExt}"`, 
+    `base: "${basename}"`,
+    `base-no-ext: "${basenameWithoutExt}"`
+  ].join('\n  '));
+
+  table = csvTables.get(normalizedWithoutExt) ?? 
+          csvTables.get(basename) ?? 
+          csvTables.get(basenameWithoutExt);
+
+  if (table) {
+    console.log(`✅ FOUND by fallback: ${table.fileName}`);
+  } else {
+    console.log(`❌ MISSING from ${csvTables.size} tables`);
+    console.log('Available:', Array.from(csvTables.keys()).join(', '));
+  }
+  console.groupEnd();
+  
+  return table;
 }
 
 function parseInterpolationMode(rawMode: unknown): CsvInterpolationMode {
@@ -213,33 +258,80 @@ function resolveRowByIndex(table: CsvTable, rowReference: number): string[] | nu
 }
 
 export function createCsvLookupResolver(
-  csvTables: CsvTableMap | undefined
-): (functionName: string, args: Array<string | number>) => number {
-  return (_functionName: string, args: Array<string | number>): number => {
+  csvTables: CsvTableMap | undefined,
+  defaultYamlPath?: string
+): (functionName: string, args: Array<string | number>, yamlPath?: string) => number | Quantity {
+  return (_functionName: string, args: Array<string | number>, yamlPath?: string): number | Quantity => {
+    const finalYamlPath = yamlPath || defaultYamlPath;
+    const normalized = _functionName.trim().toLowerCase();
+    
+    // Support all lookup-style functions (csv, lookup, table) using CSV resolver
+    if (normalized !== "csv" && normalized !== "lookup" && normalized !== "table") {
+      return NaN;
+    }
+
     if (args.length < 2) {
-      throw new Error("csv() requires at least table and row arguments");
+      throw new Error(`${normalized}() requires at least table and row arguments`);
     }
 
     const tableRef = args[0];
     if (typeof tableRef !== "string" || !tableRef.trim()) {
-      throw new Error("csv() first argument must be a table name");
+      throw new Error(`${normalized}() first argument must be a table name`);
     }
 
-    const table = resolveCsvTable(csvTables, tableRef);
+    const table = resolveCsvTable(csvTables, tableRef, finalYamlPath);
     if (!table) {
-      throw new Error(`csv table not found: ${tableRef}`);
+      throw new Error(`table not found: ${tableRef}`);
     }
 
     let lookupColumnRef: unknown = 0;
     let valueColumnRef: unknown = args[2] ?? 1;
     let interpolationRef: unknown = args[3];
+    let unitRef: unknown = args[4];
     let allowRowIndex = true;
 
-    if (args.length >= 5) {
+    if (args.length >= 6) {
+      // csv(table, row, lookupCol, valueCol, mode, unit)
       allowRowIndex = false;
       lookupColumnRef = args[2];
       valueColumnRef = args[3];
       interpolationRef = args[4];
+      unitRef = args[5];
+    } else if (args.length === 5) {
+      // Possible signatures for 5 args:
+      // - csv(table, row, lookupCol, valueCol, mode)
+      // - csv(table, row, lookupCol, valueCol, unit)
+      // - csv(table, row, valueCol, mode, unit)
+      const thirdIsColumn = resolveColumnIndex(table, args[2]) != null;
+      const fourthIsColumn = resolveColumnIndex(table, args[3]) != null;
+      const fifthIsMode = (() => {
+        try {
+          parseInterpolationMode(args[4]);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+
+      if (thirdIsColumn && fourthIsColumn) {
+        allowRowIndex = false;
+        lookupColumnRef = args[2];
+        valueColumnRef = args[3];
+        if (fifthIsMode) {
+            interpolationRef = args[4];
+            unitRef = undefined;
+        } else {
+            interpolationRef = undefined;
+            unitRef = args[4];
+        }
+      } else {
+        // Fallback to simpler signature
+        allowRowIndex = true;
+        lookupColumnRef = 0;
+        valueColumnRef = args[2];
+        interpolationRef = args[3];
+        unitRef = args[4];
+      }
     } else if (args.length === 4) {
       const secondIsColumn = resolveColumnIndex(table, args[2]) != null;
       const thirdIsColumn = resolveColumnIndex(table, args[3]) != null;
@@ -257,22 +349,27 @@ export function createCsvLookupResolver(
         lookupColumnRef = args[2];
         valueColumnRef = args[3];
         interpolationRef = undefined;
+        unitRef = undefined;
       } else if (secondIsColumn && thirdIsMode) {
         allowRowIndex = true;
         lookupColumnRef = 0;
         valueColumnRef = args[2];
         interpolationRef = args[3];
+        unitRef = undefined;
       } else {
-        allowRowIndex = false;
-        lookupColumnRef = args[2];
-        valueColumnRef = args[3];
+        // csv(table, row, valueCol, unit)
+        allowRowIndex = true;
+        lookupColumnRef = 0;
+        valueColumnRef = args[2];
         interpolationRef = undefined;
+        unitRef = args[3];
       }
     } else {
       allowRowIndex = true;
       lookupColumnRef = 0;
       valueColumnRef = args[2] ?? 1;
       interpolationRef = undefined;
+      unitRef = undefined;
     }
 
     const interpolationMode = parseInterpolationMode(interpolationRef);
@@ -295,6 +392,8 @@ export function createCsvLookupResolver(
             return Number.isFinite(parsed) ? parsed : null;
           })();
 
+    let numeric: number | null = null;
+
     if (
       interpolationMode !== "none" &&
       numericRowRef != null &&
@@ -305,27 +404,34 @@ export function createCsvLookupResolver(
         lookupColumnIndex,
         valueColumnIndex
       );
-      const interpolated = interpolateValue(numericRowRef, points, interpolationMode);
-      if (interpolated != null) {
-        return interpolated;
+      numeric = interpolateValue(numericRowRef, points, interpolationMode);
+    }
+
+    if (numeric == null) {
+      const row =
+        allowRowIndex && typeof rowRef === "number"
+          ? resolveRowByIndex(table, rowRef)
+          : resolveRowByLookup(table, rowRef, lookupColumnIndex);
+
+      if (!row) {
+        throw new Error(`csv row not found '${String(rowRef)}'`);
       }
+
+      const cellValue = String(row[valueColumnIndex] ?? "").trim();
+      numeric = parseNumericCell(cellValue);
     }
 
-    const row =
-      allowRowIndex && typeof rowRef === "number"
-        ? resolveRowByIndex(table, rowRef)
-        : resolveRowByLookup(table, rowRef, lookupColumnIndex);
-
-    if (!row) {
-      throw new Error(`csv row not found '${String(rowRef)}'`);
-    }
-
-    const cellValue = String(row[valueColumnIndex] ?? "").trim();
-    const numeric = parseNumericCell(cellValue);
     if (numeric == null) {
       throw new Error(
         `csv value is not numeric for row '${String(rowRef)}', column '${String(valueColumnRef)}'`
       );
+    }
+
+    if (unitRef != null && typeof unitRef === "string" && unitRef.trim()) {
+      const quantity = createQuantity(numeric, unitRef.trim());
+      if (quantity.ok) {
+        return quantity.value;
+      }
     }
 
     return numeric;

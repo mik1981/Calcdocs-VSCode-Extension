@@ -53,6 +53,7 @@ export class LegacyParserProvider {
 
     const valueNumber = this.state.symbolValues.get(name);
     const value = typeof valueNumber === "number" ? String(valueNumber) : undefined;
+    const unit = this.state.symbolUnits.get(name);
     const expression = this.state.allDefines.get(name);
     const location = parserLocationForSymbol(this.state, name);
 
@@ -60,6 +61,7 @@ export class LegacyParserProvider {
       name,
       kind: parserKindForSymbol(this.state, name),
       value,
+      unit,
       expression,
       location,
       source: "parser",

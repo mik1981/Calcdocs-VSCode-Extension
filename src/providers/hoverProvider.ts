@@ -524,7 +524,7 @@ function formatInDocumentOverflowSection(
 
   for (const definition of inDocumentDefinitions) {
     const preview = evaluateExpressionPreview(state, definition.expr);
-    if (preview.error?.kind !== "cast-overflow") {
+    if (preview.error?.kind !== "cast-overflow" || !preview.error.overflow) {
       continue;
     }
 
@@ -557,11 +557,21 @@ function evaluateMacroForHover(macroCall: string, state: CalcDocsState): string 
   sections.push(displayBlock || displayCall);
 
   if (typeof preview.value === "number") {
-    sections.push(`-> **${formatPreviewNumberWithHex(state, preview.value)}**`);
+    if (
+      typeof preview.displayValue === "number" &&
+      typeof preview.displayUnit === "string" &&
+      preview.displayUnit.trim().length > 0
+    ) {
+      sections.push(
+        `-> **${formatPreviewNumber(state, preview.displayValue)} [${preview.displayUnit}]**`
+      );
+    } else {
+      sections.push(`-> **${formatPreviewNumberWithHex(state, preview.value)}**`);
+    }
     return sections.join("\n\n");
   }
 
-  if (preview.error?.kind === "cast-overflow") {
+  if (preview.error?.kind === "cast-overflow" && preview.error.overflow) {
     sections.push(formatCastOverflowErrorLine(state, preview.error.overflow));
     return sections.join("\n\n");
   }

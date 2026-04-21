@@ -12,6 +12,8 @@ export type ExpressionPreview = {
   expanded: string;
   value: number | null;
   error: CompositeExpressionPreviewError | null;
+  displayValue?: number;
+  displayUnit?: string;
 };
 
 type FormatExpandedPreviewOptions = {
@@ -34,7 +36,8 @@ export function evaluateExpressionPreview(
     state.allDefines,
     state.functionDefines,
     {},
-    state.defineConditions
+    state.defineConditions,
+    state.symbolUnits
   );
 }
 
@@ -96,6 +99,10 @@ export function buildCStylePreview(
   rightHandSide: string,
   isDefineDirective: boolean
 ): string {
+  if (!displayName) {
+    return `(${rightHandSide})`;
+  }
+
   return isDefineDirective
     ? `#define ${displayName} ${rightHandSide}`
     : `${displayName} = ${rightHandSide}`;

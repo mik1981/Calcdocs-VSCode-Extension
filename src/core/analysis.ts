@@ -17,7 +17,7 @@ import {
   type SymbolResolutionStats,
   snapshotSymbolResolutionStats,
 } from "./expression";
-import { loadAdjacentCsvTables } from "./csvTables";
+import { loadAdjacentCsvTables, loadWorkspaceCsvTables } from "./csvTables";
 import { loadYaml, buildFormulaEntry, type LoadedYaml } from "./yamlParser";
 import { getConfig, isIgnoredFsPath, refreshIgnoredDirs } from "./config";
 import * as vscode from "vscode";
@@ -37,6 +37,7 @@ import { localize } from "../utils/localize";
 import { updateBraceDepth } from "../utils/braceDepth";
 import {
   parseExpressionUnit,
+  buildVariableDimensions,
   evaluateExpressionDimensions,
   formatDimensionVector,
   dimensionsEqual,
@@ -976,8 +977,9 @@ async function runYamlAnalysis(
     symbolResolutionStats: stackStats,
   });
 
-  // Carica le tabelle CSV adiacenti
-  const csvTables = await loadAdjacentCsvTables(yamlPath);
+  // Carica le tabelle CSV del workspace (incluse quelle adiacenti allo YAML)
+  const csvFiles = files.filter(f => f.toLowerCase().endsWith(".csv"));
+  state.csvTables = await loadWorkspaceCsvTables(csvFiles);
 
   // Estrai unità dai sorgenti C/C++ e sincronizzale con YAML.
   const extractedUnits = await extractUnitsFromCppFiles(files, state.workspaceRoot);
@@ -1010,9 +1012,10 @@ async function runYamlAnalysis(
 
   const yamlEngineResult = evaluateYamlDocument(loadedYaml.parsed, {
     rawText: loadedYaml.rawText,
+    yamlPath: yamlPath,
     externalValues: yamlExternalValues,
     externalUnits: extractedUnits.units,
-    csvTables,
+    csvTables: state.csvTables,
   });
 
   state.yamlDiagnostics = yamlEngineResult.diagnostics;
@@ -1084,7 +1087,16 @@ function seedSymbolValuesFromYaml(
       continue;
     }
 
-    const numericValue = Number(node.value);
+    const rawValue = node.value;
+    let numericValue = Number(rawValue);
+
+    if (!Number.isFinite(numericValue) && typeof rawValue === "string") {
+      const match = rawValue.trim().match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-z%][A-Za-z0-9_%]*)$/);
+      if (match) {
+        numericValue = Number(match[1]);
+      }
+    }
+
     if (Number.isFinite(numericValue)) {
       state.symbolValues.set(key, numericValue);
     }
@@ -1116,9 +1128,15 @@ function applyCppSymbols(
   state.symbolDefs.clear();
   state.symbolConditionalDefs.clear();
   state.symbolAmbiguityRoots.clear();
+  state.symbolUnits.clear();
 
   if (options.resetSymbolValues) {
     state.symbolValues.clear();
+  }
+
+  // Copia le unità estratte
+  for (const [name, unit] of cppSymbols.units) {
+    state.symbolUnits.set(name, unit);
   }
 
   // Processa le definizioni #define
@@ -1364,6 +1382,10 @@ function rebuildFormulaIndexWithEngine(
       yamlPath,
       state.workspaceRoot
     );
+
+    if (entry.unit) {
+      state.symbolUnits.set(key, entry.unit);
+    }
     const evaluated = evaluatedSymbols.get(key);
 
     if (evaluated) {
@@ -1440,6 +1462,10 @@ function rebuildFormulaIndex(
       state.workspaceRoot
     );
 
+    if (entry.unit) {
+      state.symbolUnits.set(key, entry.unit);
+    }
+
     // Se c'è una formula, processa e calcola il valore
     if (entry.formula) {
       // Estrai unità di misura inline se presente (es. "5 * MUL -> m/s")
@@ -1458,16 +1484,16 @@ function rebuildFormulaIndex(
       // Processa solo se non ci sono simboli ambigui
       if (ambiguousSymbols.length === 0) {
         const resolvedMap = new Map<string, number>();
-        const replaced = replaceTokens(formulaExpr, state.symbolValues);
         const expanded = expandExpression(
-          replaced,
+          formulaExpr,
           defines,
           functionDefines,
           resolvedMap,
           state.symbolValues,
           evalContext,
           stackStats,
-          state.defineConditions
+          state.defineConditions,
+          state.symbolUnits
         );
         const expandedWithLookups = resolveInlineLookups(expanded, evalContext);
 
@@ -1482,7 +1508,8 @@ function rebuildFormulaIndex(
         
         // Calcola le dimensioni fisiche se richiesto
         if (outputUnit) {
-          const dimResult = evaluateExpressionDimensions(formulaExpr, new Map());
+          const varDims = buildVariableDimensions(state);
+          const dimResult = evaluateExpressionDimensions(formulaExpr, varDims);
           if (dimResult.dimension) {
             // Aggiungi warning di dimensione se presente
             const unitSpec = UNIT_SPECS.get(normalizeUnitToken(outputUnit));
@@ -1505,7 +1532,8 @@ function rebuildFormulaIndex(
           state.symbolValues,
           evalContext,
           stackStats,
-          state.defineConditions
+          state.defineConditions,
+          state.symbolUnits
         );
         const expandedWithLookups = resolveInlineLookups(expanded, evalContext);
 

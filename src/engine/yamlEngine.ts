@@ -25,6 +25,7 @@ import {
   toDisplayValue,
   type UnitSpec,
   type Quantity,
+  SCALABLE_UNIT_FAMILY,
 } from "./units";
 
 export type YamlSymbolType = "const" | "expr" | "lookup";
@@ -84,6 +85,7 @@ export type YamlEvaluationResult = {
 
 export type EvaluateYamlOptions = {
   rawText: string;
+  yamlPath?: string;
   externalValues?: Map<string, number>;
   externalUnits?: Map<string, string>;
   csvTables?: CsvTableMap;
@@ -94,8 +96,21 @@ function toNumericValue(value: unknown): number | undefined {
     return value;
   }
 
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+
+    // Support units in string: "5 V"
+    const match = trimmed.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*[A-Za-z%][A-Za-z0-9_%]*$/);
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  return undefined;
 }
 
 function inferSymbolType(node: Record<string, unknown>): YamlSymbolType | null {
@@ -255,76 +270,6 @@ function expressionNeedsOutputConversion(ast: ExpressionNode | undefined): boole
   return requiresConversion;
 }
 
-const SCALABLE_UNIT_FAMILY = new Map<string, string>([
-  // Time
-  ["s", "time"],
-  ["ms", "time"],
-  ["us", "time"],
-  ["ns", "time"],
-  // Length
-  ["m", "length"],
-  ["km", "length"],
-  ["dm", "length"],
-  ["cm", "length"],
-  ["mm", "length"],
-  ["um", "length"],
-  ["nm", "length"],
-  // Area / volume
-  ["m2", "area"],
-  ["cm2", "area"],
-  ["mm2", "area"],
-  ["m3", "volume"],
-  ["l", "volume"],
-  ["ml", "volume"],
-  // Mass
-  ["kg", "mass"],
-  ["g", "mass"],
-  ["mg", "mass"],
-  ["ug", "mass"],
-  // Pressure / force
-  ["pa", "pressure"],
-  ["kpa", "pressure"],
-  ["mpa", "pressure"],
-  ["n", "force"],
-  ["kn", "force"],
-  // Electrical
-  ["a", "current"],
-  ["ma", "current"],
-  ["ua", "current"],
-  ["v", "voltage"],
-  ["mv", "voltage"],
-  ["kv", "voltage"],
-  ["ohm", "resistance"],
-  ["kohm", "resistance"],
-  ["mohm", "resistance"],
-  ["siemens", "conductance"],
-  ["msiemens", "conductance"],
-  ["usiemens", "conductance"],
-  ["f", "capacitance"],
-  ["mf", "capacitance"],
-  ["uf", "capacitance"],
-  ["nf", "capacitance"],
-  ["pf", "capacitance"],
-  ["hry", "inductance"],
-  ["mhry", "inductance"],
-  ["uhry", "inductance"],
-  ["nhry", "inductance"],
-  // Frequency / power / energy
-  ["hz", "frequency"],
-  ["khz", "frequency"],
-  ["mhz", "frequency"],
-  ["ghz", "frequency"],
-  ["w", "power"],
-  ["mw", "power"],
-  ["kw", "power"],
-  ["mwatt", "power"],
-  ["j", "energy"],
-  ["kj", "energy"],
-  ["mj", "energy"],
-  ["t", "magnetic_flux_density"],
-  ["mt", "magnetic_flux_density"],
-]);
-
 function shouldConvertPureExpressionOutput(
   quantity: Quantity,
   outputSpec: UnitSpec
@@ -342,7 +287,24 @@ function shouldConvertPureExpressionOutput(
 
   const sourceFamily = SCALABLE_UNIT_FAMILY.get(sourceToken);
   const targetFamily = SCALABLE_UNIT_FAMILY.get(outputSpec.token);
-  return Boolean(sourceFamily && targetFamily && sourceFamily === targetFamily);
+  if (!sourceFamily || !targetFamily || sourceFamily !== targetFamily) {
+    return false;
+  }
+
+  // Keep pure multiplicative expressions in their native engineering unit for
+  // broad families (pressure/force/energy...), and only auto-scale where users
+  // usually expect SI-prefix normalization.
+  return [
+    "voltage",
+    "current",
+    "resistance",
+    "conductance",
+    "capacitance",
+    "inductance",
+    "frequency",
+    "time",
+    "power",
+  ].includes(sourceFamily);
 }
 
 function createDiagnostic(
@@ -352,6 +314,17 @@ function createDiagnostic(
   severity: DiagnosticSeverity,
   message: string
 ): void {
+  const duplicate = diagnostics.some(
+    (entry) =>
+      entry.symbol === symbol &&
+      entry.line === line &&
+      entry.severity === severity &&
+      entry.message === message
+  );
+  if (duplicate) {
+    return;
+  }
+
   diagnostics.push({
     symbol,
     line,
@@ -376,9 +349,20 @@ function parseSymbols(
     const node = rawNode as Record<string, unknown>;
     const type = inferSymbolType(node);
     const line = Math.max(0, getYamlTopLevelLine(options.rawText, name));
-    const declaredUnit = typeof node.unit === "string" ? node.unit.trim() : undefined;
+    
+    let yamlValue = toNumericValue(node.value);
+    let unitFromValue: string | undefined;
+    
+    if (yamlValue == null && typeof node.value === "string") {
+      const match = node.value.trim().match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-z%][A-Za-z0-9_%]*)$/);
+      if (match) {
+        yamlValue = Number(match[1]);
+        unitFromValue = match[2];
+      }
+    }
+
+    const declaredUnit = typeof node.unit === "string" ? node.unit.trim() : unitFromValue;
     const effectiveUnit = declaredUnit || externalUnits.get(name);
-    const yamlValue = toNumericValue(node.value);
 
     if (!type) {
       createDiagnostic(
@@ -403,8 +387,7 @@ function parseSymbols(
     }
 
     if (type === "const") {
-      const value = toNumericValue(node.value);
-      if (value == null) {
+      if (yamlValue == null) {
         createDiagnostic(
           diagnostics,
           name,
@@ -419,10 +402,10 @@ function parseSymbols(
         line,
         type,
         rawNode: node,
-        literalValue: value,
+        literalValue: yamlValue ?? undefined,
         declaredUnit,
         effectiveUnit,
-        yamlValue,
+        yamlValue: yamlValue ?? undefined,
         dependencies: [],
       });
       continue;
@@ -558,7 +541,7 @@ export function evaluateYamlDocument(
   const cycleNodes = new Set<string>();
   const externalValues = options.externalValues ?? new Map<string, number>();
   const externalUnits = options.externalUnits ?? new Map<string, string>();
-  const csvLookup = createCsvLookupResolver(options.csvTables);
+  const csvLookup = createCsvLookupResolver(options.csvTables, options.yamlPath);
 
   for (const cycle of cycles) {
     for (const name of cycle) {
@@ -639,21 +622,31 @@ export function evaluateYamlDocument(
       warnings: [],
       yamlValue: symbol.yamlValue,
     };
+    const addError = (message: string): void => {
+      if (!result.errors.includes(message)) {
+        result.errors.push(message);
+      }
+    };
+    const addWarning = (message: string): void => {
+      if (!result.warnings.includes(message)) {
+        result.warnings.push(message);
+      }
+    };
 
     evaluated.set(name, result);
 
     if (cycleNodes.has(name)) {
-      result.errors.push("evaluation skipped because of circular dependency");
+      addError("evaluation skipped because of circular dependency");
       return result;
     }
 
     if (symbol.parseError) {
-      result.errors.push(symbol.parseError);
+      addError(symbol.parseError);
       return result;
     }
 
     if (evaluating.has(name)) {
-      result.errors.push(`recursive evaluation detected for '${name}'`);
+      addError(`recursive evaluation detected for '${name}'`);
       return result;
     }
 
@@ -661,14 +654,14 @@ export function evaluateYamlDocument(
 
     if (symbol.type === "const") {
       if (typeof symbol.literalValue !== "number" || !Number.isFinite(symbol.literalValue)) {
-        result.errors.push(`const '${name}' has invalid numeric value`);
+        addError(`const '${name}' has invalid numeric value`);
         evaluating.delete(name);
         return result;
       }
 
       const quantity = createQuantity(symbol.literalValue, symbol.effectiveUnit);
       if (!quantity.ok) {
-        result.errors.push(quantity.error);
+        addError(quantity.error);
         evaluating.delete(name);
         return result;
       }
@@ -694,30 +687,55 @@ export function evaluateYamlDocument(
     }
 
     if (!symbol.ast || !symbol.expression) {
-      result.errors.push("expression is not available");
+      addError("expression is not available");
       evaluating.delete(name);
       return result;
     }
 
     const context: EvaluationContext = {
       resolveIdentifier: (identifier: string): Quantity | undefined => {
+        // 1. Prova a risolvere dai simboli YAML già valutati o in corso di valutazione
         if (symbols.has(identifier)) {
           const dependency = evaluateSymbol(identifier);
-          return dependency?.quantity;
+          if (dependency?.quantity) {
+            return dependency.quantity;
+          }
+          // Se non abbiamo ancora il valore, ma abbiamo l'unità dichiarata,
+          // restituiamo una quantità con valore 1.0 ma dimensione corretta.
+          const declaredUnit = symbols.get(identifier)?.effectiveUnit;
+          if (declaredUnit) {
+            const q = createQuantity(1.0, declaredUnit);
+            if (q.ok) return q.value;
+          }
         }
 
-        return resolveExternalQuantity(identifier);
+        // 2. Prova a risolvere dai simboli esterni (C/C++)
+        const extValue = externalValues.get(identifier);
+        const extUnit = externalUnits.get(identifier);
+        
+        if (extUnit) {
+          const q = createQuantity(extValue ?? 1.0, extUnit);
+          if (q.ok) return q.value;
+        }
+
+        if (extValue !== undefined) {
+          const q = createQuantity(extValue);
+          if (q.ok) return q.value;
+        }
+
+        return undefined;
       },
       resolveLookup: (functionName, args) => csvLookup(functionName, args),
     };
 
+    const hasUnknownVariables = symbol.dependencies.some(
+      (dep) => !symbols.has(dep) && !externalUnits.has(dep) && !externalValues.has(dep)
+    );
+
     const evaluatedExpression = evaluateExpressionAst(symbol.ast, context);
     if (!evaluatedExpression.ok) {
-      // ✅ PER MACRO PARAMETRIZZATE IGNORIAMO TUTTI GLI ERRORI DI VALUTAZIONE
-      // Solo i controlli dimensionali fatti prima sono validi
-      const hasFreeVariables = symbol.dependencies.some(dep => !symbols.has(dep) && !externalValues.has(dep));
-      if (!hasFreeVariables) {
-        result.errors.push(evaluatedExpression.error);
+      if (!hasUnknownVariables) {
+        addError(evaluatedExpression.error);
       }
       evaluating.delete(name);
       return result;
@@ -725,48 +743,48 @@ export function evaluateYamlDocument(
 
     let quantity = evaluatedExpression.quantity;
     if (symbol.effectiveUnit) {
-      // Always validate output-unit compatibility.
       const outputSpec = getUnitSpec(symbol.effectiveUnit);
       if (!outputSpec) {
-        result.errors.push(`unknown unit '${symbol.effectiveUnit}'`);
+        addError(`unknown unit '${symbol.effectiveUnit}'`);
         evaluating.delete(name);
         return result;
       }
 
-      // ✅ Caso speciale: se la formula ha QUALSIASI variabile libera/parametro
-      // Saltiamo TUTTI i controlli di compatibilità unità, perché non possiamo sapere che unità avranno a runtime
-      // La formula verrà comunque valutata correttamente nel codice C
-      const hasFreeVariables = symbol.dependencies.some(dep => !symbols.has(dep) && !externalValues.has(dep));
-      
-      if (!dimensionsEqual(quantity.dimension, outputSpec.dimension) && !hasFreeVariables) {
-        result.errors.push(
-          `unit mismatch: expression has ${formatDimension(quantity.dimension)} ` +
-            `but output unit '${outputSpec.canonical}' requires ${formatDimension(outputSpec.dimension)}`
+      const hasUnitMismatch =
+        !dimensionsEqual(quantity.dimension, outputSpec.dimension) && !hasUnknownVariables;
+      if (hasUnitMismatch) {
+        const calcDim = formatDimension(quantity.dimension);
+        const targetDim = formatDimension(outputSpec.dimension);
+        addError(
+          `unit mismatch: expression has ${calcDim} ` +
+            `but output unit '${outputSpec.canonical}' expects ${targetDim}`
         );
-        evaluating.delete(name);
-        return result;
-      }
-
-      const shouldConvertOutput =
-        expressionNeedsOutputConversion(symbol.ast) ||
-        shouldConvertPureExpressionOutput(quantity, outputSpec);
-      if (shouldConvertOutput) {
-        const output = applyOutputUnit(quantity, symbol.effectiveUnit);
-        if (!output.ok) {
-          result.errors.push(output.error);
-          evaluating.delete(name);
-          return result;
-        }
-
-        quantity = output.value.quantity;
-        result.value = output.value.displayValue;
-        result.outputUnit = output.value.displayUnit;
-        result.quantity = quantity;
-      } else {
-        // Conversion is skipped for pure scale/mul/div expressions.
+        // Keep the native evaluated quantity and avoid re-emitting the same
+        // mismatch from a downstream conversion layer.
         result.quantity = quantity;
         result.value = toDisplayValue(quantity);
         result.outputUnit = toDisplayUnit(quantity);
+      } else {
+        const shouldConvertOutput =
+          expressionNeedsOutputConversion(symbol.ast) ||
+          shouldConvertPureExpressionOutput(quantity, outputSpec);
+        if (shouldConvertOutput) {
+          const output = applyOutputUnit(quantity, symbol.effectiveUnit);
+          if (!output.ok) {
+            addError(output.error);
+            evaluating.delete(name);
+            return result;
+          }
+
+          quantity = output.value.quantity;
+          result.value = output.value.displayValue;
+          result.outputUnit = output.value.displayUnit;
+          result.quantity = quantity;
+        } else {
+          result.quantity = quantity;
+          result.value = toDisplayValue(quantity);
+          result.outputUnit = toDisplayUnit(quantity);
+        }
       }
     } else {
       result.quantity = quantity;
@@ -776,23 +794,31 @@ export function evaluateYamlDocument(
 
     const substituted = substituteIdentifiersForExplain(
       symbol.ast,
-      (identifier): number | undefined => {
+      (identifier): { value: number; unit?: string } | undefined => {
         if (symbols.has(identifier)) {
           const dependency = evaluateSymbol(identifier);
           if (!dependency?.quantity) {
             return undefined;
           }
-          return toDisplayValue(dependency.quantity);
+          return {
+            value: toDisplayValue(dependency.quantity),
+            unit: toDisplayUnit(dependency.quantity),
+          };
         }
 
         if (externalValues.has(identifier)) {
           const externalQuantity = resolveExternalQuantity(identifier);
           if (externalQuantity) {
-            return toDisplayValue(externalQuantity);
+            return {
+              value: toDisplayValue(externalQuantity),
+              unit: toDisplayUnit(externalQuantity),
+            };
           }
 
           const fallback = externalValues.get(identifier);
-          return typeof fallback === "number" ? fallback : undefined;
+          return typeof fallback === "number"
+            ? { value: fallback, unit: externalUnits.get(identifier) }
+            : undefined;
         }
 
         return undefined;
@@ -849,7 +875,7 @@ export function evaluateYamlDocument(
       // This additional guard helps surface expressions that silently became
       // dimensionless because of missing dependencies.
       if (result.outputUnit === formatDimension(quantity.dimension)) {
-        result.warnings.push(
+        addWarning(
           `output unit fallback used (${result.outputUnit}) because no canonical unit mapping was found`
         );
       }

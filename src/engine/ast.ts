@@ -13,6 +13,7 @@ export type StringLiteralNode = {
 export type IdentifierNode = {
   kind: "identifier";
   name: string;
+  unit?: string;
 };
 
 export type UnaryExpressionNode = {
@@ -445,7 +446,7 @@ export function printExpression(expression: ExpressionNode): string {
     case "string":
       return JSON.stringify(expression.value);
     case "identifier":
-      return expression.name;
+      return expression.unit ? `${expression.name}[${expression.unit}]` : expression.name;
     case "unary": {
       const argument = printExpression(expression.argument);
       if (

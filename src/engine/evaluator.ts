@@ -35,7 +35,7 @@ export type PrimitiveArgument = number | string;
 
 export type EvaluationContext = {
   resolveIdentifier: (name: string) => Quantity | undefined;
-  resolveLookup?: (functionName: string, args: PrimitiveArgument[]) => number;
+  resolveLookup?: (functionName: string, args: PrimitiveArgument[]) => number | Quantity;
 };
 
 export type EvaluationResult =
@@ -46,16 +46,81 @@ const QUANTITY_LITERAL_RX =
   /(?<![A-Za-z0-9_.$])([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s+([A-Za-z%][A-Za-z0-9_%]*)/g;
 
 export function preprocessExpression(expression: string): string {
-  return expression.replace(
+  // 1. Literal numerici: "5 mA" -> "__unit(5, 'mA')"
+  let processed = expression.replace(
     QUANTITY_LITERAL_RX,
     (full: string, rawValue: string, rawUnit: string) => {
       if (!getUnitSpec(rawUnit)) {
         return full;
       }
-
       return `__unit(${rawValue}, ${JSON.stringify(rawUnit)})`;
     }
   );
+
+  // 2. Parentesi o chiamate a funzione con unità: "(1+2) V" -> "__unit((1+2), 'V')" o "csv(...) ohm" -> "__unit(csv(...), 'ohm')"
+  // Cerchiamo ") [unit]" dove [unit] è un'unità valida.
+  const COMPLEX_UNIT_RX = /\)\s*([A-Za-z%][A-Za-z0-9_%]*)/g;
+  let match: RegExpExecArray | null;
+
+  // Usiamo un ciclo per processare tutte le occorrenze, partendo dal fondo per non sfasare gli indici 
+  // o semplicemente ricostruendo la stringa.
+  // Dato che le sostituzioni possono sovrapporsi, facciamo un approccio più semplice:
+  // cerchiamo il pattern e se lo troviamo, cerchiamo la parentesi aperta corrispondente.
+  
+  // Per evitare loop infiniti o problemi con sostituzioni multiple, usiamo un approccio di scansione 
+  // che sostituisce le occorrenze in modo sicuro.
+  
+  let result = processed;
+  let offset = 0;
+  
+  // Reset regex state
+  COMPLEX_UNIT_RX.lastIndex = 0;
+  
+  while ((match = COMPLEX_UNIT_RX.exec(result)) !== null) {
+    const unitToken = match[1];
+    if (!getUnitSpec(unitToken)) {
+      continue;
+    }
+
+    const closeParenIndex = match.index;
+    const unitStart = match.index + 1;
+    const unitEnd = match.index + match[0].length;
+
+    // Troviamo la parentesi aperta corrispondente camminando a ritroso
+    let depth = 0;
+    let openParenIndex = -1;
+    for (let i = closeParenIndex; i >= 0; i--) {
+      if (result[i] === ')') depth++;
+      else if (result[i] === '(') {
+        depth--;
+        if (depth === 0) {
+          openParenIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (openParenIndex !== -1) {
+      // Se prima della parentesi aperta c'è un identificatore (chiamata a funzione), includiamolo
+      let startIndex = openParenIndex;
+      while (startIndex > 0 && /[A-Za-z0-9_]/.test(result[startIndex - 1])) {
+        startIndex--;
+      }
+
+      const expressionToWrap = result.slice(startIndex, closeParenIndex + 1);
+      const replacement = `__unit(${expressionToWrap}, ${JSON.stringify(unitToken)})`;
+      
+      const before = result.slice(0, startIndex);
+      const after = result.slice(unitEnd);
+      
+      result = before + replacement + after;
+      
+      // Riposizioniamo lastIndex dato che la stringa è cambiata
+      COMPLEX_UNIT_RX.lastIndex = before.length + replacement.length;
+    }
+  }
+
+  return result;
 }
 
 function toQuantity(value: RuntimeValue, contextMessage: string): UnitResult<Quantity> {
@@ -179,7 +244,18 @@ function evaluateCall(
     }
 
     const lookupValue = context.resolveLookup(normalized, primitiveArgs);
-    if (!Number.isFinite(lookupValue)) {
+
+    if (typeof lookupValue === "object" && lookupValue !== null && "valueSi" in lookupValue) {
+      return {
+        ok: true,
+        value: {
+          kind: "quantity",
+          quantity: lookupValue as Quantity,
+        },
+      };
+    }
+
+    if (typeof lookupValue !== "number" || !Number.isFinite(lookupValue)) {
       return {
         ok: false,
         error: `${normalized}() returned non-finite value`,
@@ -477,7 +553,7 @@ function literalFromExpression(node: ExpressionNode): PrimitiveArgument | null {
 function evaluateLiteralCall(
   callee: string,
   args: PrimitiveArgument[],
-  lookup?: (functionName: string, args: PrimitiveArgument[]) => number
+  lookup?: (functionName: string, args: PrimitiveArgument[]) => number | Quantity
 ): number | null {
   const normalized = callee.trim().toLowerCase();
 
@@ -508,7 +584,17 @@ function evaluateLiteralCall(
   if ((normalized === "csv" || normalized === "lookup") && lookup) {
     try {
       const value = lookup(normalized, args);
-      return Number.isFinite(value) ? value : null;
+      // return Number.isFinite(value) ? value : null;
+      if (typeof value === 'number') {
+          return Number.isFinite(value) ? value : null;
+      } 
+      // Se è una Quantity, usiamo la funzione di utility che hai già nel progetto
+      if (value && typeof value === 'object') {
+          const numericValue = quantityToPrimitive(value); // Usa questa funzione definita nel tuo evaluator.ts
+          return Number.isFinite(numericValue) ? numericValue : null;
+      }
+      return null;
+      
     } catch {
       return null;
     }
@@ -532,7 +618,7 @@ function evaluateLiteralCall(
 
 function reduceNumericNodeOnce(
   node: ExpressionNode,
-  lookup?: (functionName: string, args: PrimitiveArgument[]) => number
+  lookup?: (functionName: string, args: PrimitiveArgument[]) => number | Quantity
 ): { reduced: boolean; node: ExpressionNode } {
   switch (node.kind) {
     case "number":
@@ -697,22 +783,22 @@ function formatStepValue(value: number): string {
 
 export function substituteIdentifiersForExplain(
   ast: ExpressionNode,
-  resolveIdentifier: (name: string) => number | undefined
+  resolveIdentifier: (name: string) => { value: number; unit?: string } | undefined
 ): ExpressionNode {
   return mapExpression(ast, (node) => {
     if (node.kind !== "identifier") {
       return node;
     }
 
-    const value = resolveIdentifier(node.name);
-    if (typeof value !== "number" || !Number.isFinite(value)) {
+    const res = resolveIdentifier(node.name);
+    if (!res || typeof res.value !== "number" || !Number.isFinite(res.value)) {
       return node;
     }
 
     return {
-      kind: "number",
-      value,
-      raw: String(value),
+      kind: "identifier",
+      name: String(res.value),
+      unit: res.unit,
     };
   });
 }
@@ -720,7 +806,7 @@ export function substituteIdentifiersForExplain(
 export function buildExplainSteps(
   expression: string,
   options?: {
-    lookup?: (functionName: string, args: PrimitiveArgument[]) => number;
+    lookup?: (functionName: string, args: PrimitiveArgument[]) => number | Quantity;
     maxSteps?: number;
   }
 ): string[] {

@@ -10,20 +10,17 @@
 
 1. Install CalcDocs.
 2. Open your firmware/project folder.
-3. Ensure `calcdocs.enabled` is `true`.
-4. Open a `.c` file and verify:
+3. **Optional: Create `formulas.yaml`** (see [Formula YAML Guide](formulas-yaml.md)).
+4. Ensure `calcdocs.enabled` is `true`.
+5. Open a `.c`/`.yaml` file and verify:
    - CodeLens values
    - ghost values
    - hover details
+   - Formula sync (if YAML present)
 
 ## Suggested Smoke Test
 
-Use [`test/src/test.c`](../test/src/test.c) and confirm values appear for:
-
-- `PT100_NUM16(3)`
-- `FINAL`, `LAST`
-- `B(4)`, `CONT_SUM(3,4)`
-- `STR(HELLO)`, `CAT(1,2)`
+Use [`examples/full_showcase/src/app.c`](../examples/full_showcase/src/app.c) and confirm values appear for constants and defines:
 
 ## Optional clangd Setup
 

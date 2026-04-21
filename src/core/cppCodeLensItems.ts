@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 
 import { collectDocumentSymbolDefinitions } from "./documentSymbols";
-import { isCompositeExpression, unwrapParens } from "./expression";
+import { isCompositeExpression, unwrapParens, removeRedundantParens } from "./expression";
 import {
   buildCStylePreview,
   evaluateExpressionPreview,
@@ -76,7 +76,7 @@ function buildAmbiguityTitle(symbolName: string, roots: string[]): string {
 }
 
 function normalizeExpressionForComparison(expression: string): string {
-  return normalizeExpandedPreviewText(unwrapParens(expression));
+  return normalizeExpandedPreviewText(removeRedundantParens(unwrapParens(expression)));
 }
 
 function buildCastOverflowTitle(
@@ -85,6 +85,9 @@ function buildCastOverflowTitle(
   error: NonNullable<ReturnType<typeof evaluateExpressionPreview>["error"]>
 ): string {
   const overflow = error.overflow;
+  if (!overflow) {
+    return `$(error) CalcDocs: ${symbolName} cast overflow: ${error.message}`;
+  }
   const rangeText = `[${formatPreviewNumber(state, overflow.min)}..${formatPreviewNumber(state, overflow.max)}]`;
   const truncated = formatPreviewNumber(state, overflow.truncatedValue);
   const input = formatPreviewNumber(state, overflow.inputValue);
@@ -120,17 +123,20 @@ export function collectCppCodeLensItems(
 
     const { line, isDefineLine, parsed } = definition;
     const { name, expr } = parsed;
-    const ambiguityRoots = state.symbolAmbiguityRoots.get(name) ?? [];
+    
+    if (name) {
+      const ambiguityRoots = state.symbolAmbiguityRoots.get(name) ?? [];
 
-    if (ambiguityRoots.length > 0) {
-      if (state.cppCodeLens.showAmbiguity && !renderedAmbiguityLens.has(name)) {
-        renderedAmbiguityLens.add(name);
-        if (!pushItem(createInfoItem(line, buildAmbiguityTitle(name, ambiguityRoots), "ambiguity"))) {
-          break;
+      if (ambiguityRoots.length > 0) {
+        if (state.cppCodeLens.showAmbiguity && !renderedAmbiguityLens.has(name)) {
+          renderedAmbiguityLens.add(name);
+          if (!pushItem(createInfoItem(line, buildAmbiguityTitle(name, ambiguityRoots), "ambiguity"))) {
+            break;
+          }
         }
-      }
 
-      continue;
+        continue;
+      }
     }
 
     const displayName = parsed.macroParams
@@ -197,9 +203,16 @@ export function collectCppCodeLensItems(
     }
 
     if (typeof value === "number" && state.cppCodeLens.showResolvedValue) {
+      const hasUnitDisplay =
+        typeof preview.displayValue === "number" &&
+        typeof preview.displayUnit === "string" &&
+        preview.displayUnit.trim().length > 0;
+      const rightHandSide = hasUnitDisplay
+        ? `${formatPreviewNumber(state, preview.displayValue!)} [${preview.displayUnit}]`
+        : formatPreviewNumber(state, value);
       const cLikePreview = buildCStylePreview(
         displayName,
-        formatPreviewNumber(state, value),
+        rightHandSide,
         isDefineLine
       );
 

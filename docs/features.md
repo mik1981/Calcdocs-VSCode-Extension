@@ -17,11 +17,12 @@
 
 ## Formula System
 
-- `formulas.yaml` evaluation with:
-  - dependency ordering
-  - explain steps
-  - mismatch diagnostics vs C/C++ symbols
-  - optional write-back support
+`formulas*.yaml` support with full structure (value/formula/unit/steps/labels). See [Formula YAML Guide](formulas-yaml.md).
+
+- Dependency ordering + explain steps.
+- Mismatch diagnostics vs C/C++.
+- Header generation (`macro_generate.h`).
+- CSV table lookups (`csv(...)`).
 
 ## Dimensional & Unit Support
 

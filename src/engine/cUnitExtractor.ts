@@ -45,13 +45,26 @@ function extractUnitToken(comment: string): string | undefined {
     return undefined;
   }
 
-  const compact = comment.replace(/\[[^\]]+\]/g, " $& ");
-  const match = compact.match(/([A-Za-z%][A-Za-z0-9_%*\/^.-]*)/);
-  if (!match) {
-    return undefined;
+  // Priorità al tag esplicito @unit=
+  const explicitMatch = comment.match(/@unit=([a-zA-Z0-9^*/_%-]+)/);
+  if (explicitMatch) {
+    return explicitMatch[1].trim();
   }
 
-  return match[1].trim();
+  // Fallback a ricerca tra parentesi quadre [unit]
+  const bracketMatch = comment.match(/\[([a-zA-Z0-9^*/_%-]+)\]/);
+  if (bracketMatch) {
+    return bracketMatch[1].trim();
+  }
+
+  // Fallback a prima parola che sembra un'unità
+  const compact = comment.trim();
+  const match = compact.match(/^([A-Za-z%][A-Za-z0-9_%*/^.-]*)/);
+  if (match) {
+    return match[1].trim();
+  }
+
+  return undefined;
 }
 
 function parseNumeric(text: string): number | undefined {

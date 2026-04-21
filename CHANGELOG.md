@@ -1,6 +1,12 @@
 # Changelog
 
+## [0.2.2]
+
+- Added more structured example under `examples` dir.
+- Switch `calcdocs.openTestFolder` to open `examples` dir
+
 ## [0.2.1]
+
 - Fix README.md
 
 ## [0.2.0]
@@ -78,7 +84,7 @@
 
 - VS Code 1.109 compatibility update.
 
-## [0.1.0]
+## [0.1.0] - 02/27/2026
 
 - First public release.
 

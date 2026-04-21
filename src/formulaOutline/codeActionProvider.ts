@@ -16,7 +16,7 @@ export class FormulaCodeActionProvider implements vscode.CodeActionProvider {
     const formula = formulas.find(f => f.lineStart === range.start.line);
     if (!formula?.expr) return [];
 
-    const inferred = inferDimension(formula.expr, formulas);
+    const inferred = inferDimension(formula.expr, formulas, formula.unit);
 
     if (inferred.dim) {
       const fix = new vscode.CodeAction('Fix unit to inferred', vscode.CodeActionKind.QuickFix);

@@ -4,7 +4,7 @@ export type SourceType = "clangd" | "parser" | "mixed" | "unknown";
 
 export type SymbolKindType = "macro" | "const" | "enum" | "variable";
 
-export type SymbolFieldName = "value" | "type" | "location" | "expression";
+export type SymbolFieldName = "value" | "unit" | "type" | "location" | "expression";
 
 export type SymbolFieldSources = Partial<Record<SymbolFieldName, SourceType>>;
 
@@ -12,6 +12,7 @@ export interface CSymbol {
   name: string;
   kind: SymbolKindType;
   value?: string;
+  unit?: string;
   type?: string;
   location?: vscode.Location;
   expression?: string;

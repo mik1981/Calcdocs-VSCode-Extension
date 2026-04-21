@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import { type FunctionMacroDefinition } from "./expression";
+import type { CsvTableMap } from "./csvTables";
 import type {
   CppCodeLensConfig,
   CppHoverConfig,
@@ -98,6 +99,10 @@ export type CalcDocsState = {
   formulaOutlines: Map<string, OutlineFormula[]>;
   /** Mappa dei valori numerici risolti dei simboli: nome -> valore */
   symbolValues: Map<string, number>;
+  /** Mappa delle unità di misura associate ai simboli (da commenti @unit=) */
+  symbolUnits: Map<string, string>;
+  /** Mappa dei CSV tables caricati: nome -> tabella */
+  csvTables: CsvTableMap;
   /** Mappa config files → their @config.* vars */
   configVars: Map<string, FileConfigVars>;
   /** Mappa delle posizioni delle definizioni dei simboli */
@@ -186,6 +191,8 @@ export function createCalcDocsState(
     formulaIndex: new Map<string, FormulaEntry>(),
     formulaOutlines: new Map(),
     symbolValues: new Map<string, number>(),
+    symbolUnits: new Map<string, string>(),
+    csvTables: new Map(),
     configVars: new Map<string, FileConfigVars>(),
     symbolDefs: new Map<string, SymbolDefinitionLocation>(),
     symbolConditionalDefs: new Map<string, SymbolConditionalDefinition[]>(),
@@ -249,6 +256,8 @@ export function createCalcDocsState(
 export function clearComputedState(state: CalcDocsState): void {
   state.formulaIndex.clear();
   state.symbolValues.clear();
+  state.symbolUnits.clear();
+  state.csvTables.clear();
   state.configVars.clear();
   state.symbolDefs.clear();
   state.symbolConditionalDefs.clear();

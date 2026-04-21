@@ -1,5 +1,12 @@
 import { OP_RX, NUM_LITERAL_RX, TOKEN_RX } from "../utils/regex";
 import { stripComments } from "../utils/text";
+import { evaluateExpression } from "../engine/evaluator";
+import {
+  createQuantity,
+  normalizeUnit,
+  toDisplayUnit,
+  toDisplayValue,
+} from "../engine/units";
 import type { CsvTable, CsvTableMap } from "./csvTables";
 import { normalizeCsvTableKey } from "./csvTables";
 
@@ -21,9 +28,17 @@ export type CastOverflowInfo = {
 };
 
 export type CompositeExpressionPreviewError = {
-  kind: "cast-overflow";
+  kind: "cast-overflow" | "other";
   message: string;
-  overflow: CastOverflowInfo;
+  overflow?: CastOverflowInfo;
+};
+
+export type CompositeExpressionPreview = {
+  expanded: string;
+  value: number | null;
+  error: CompositeExpressionPreviewError | null;
+  displayValue?: number;
+  displayUnit?: string;
 };
 
 type IdentifierMeta = {
@@ -680,7 +695,7 @@ function interpolateCsvValue(
 function lookupCsvValue(
   args: unknown[],
   csvTables: CsvTableMap | undefined
-): number {
+): number | any {
   if (args.length < 2) {
     throw new Error("csv() requires at least table and row parameters");
   }
@@ -700,19 +715,54 @@ function lookupCsvValue(
   // - csv(table, row, valueColumn, interpolationMode)
   // - csv(table, row, lookupColumn, valueColumn)
   // - csv(table, row, lookupColumn, valueColumn, interpolationMode)
+  // - csv(table, row, lookupColumn, valueColumn, interpolationMode, unit)
   let isNewSignature = false;
   let allowNumericRowIndex = true;
   const fallbackValueColumn = typeof rowRef === "string" ? 1 : 0;
   let lookupColumnRef: unknown = 0;
   let valueColumnRef: unknown = args[2] ?? fallbackValueColumn;
   let interpolationModeRef: unknown = args[3];
+  let unitRef: unknown = undefined;
 
-  if (args.length >= 5) {
+  if (args.length >= 6) {
     isNewSignature = true;
     allowNumericRowIndex = false;
     lookupColumnRef = args[2];
     valueColumnRef = args[3];
     interpolationModeRef = args[4];
+    unitRef = args[5];
+  } else if (args.length === 5) {
+    const thirdIsColumn = resolveCsvColumnIndex(table, args[2]) != null;
+    const fourthIsColumn = resolveCsvColumnIndex(table, args[3]) != null;
+    const fifthIsMode = (() => {
+        try {
+          parseCsvInterpolationMode(args[4]);
+          return true;
+        } catch {
+          return false;
+        }
+    })();
+
+    if (thirdIsColumn && fourthIsColumn) {
+      isNewSignature = true;
+      allowNumericRowIndex = false;
+      lookupColumnRef = args[2];
+      valueColumnRef = args[3];
+      if (fifthIsMode) {
+        interpolationModeRef = args[4];
+        unitRef = undefined;
+      } else {
+        interpolationModeRef = undefined;
+        unitRef = args[4];
+      }
+    } else {
+      isNewSignature = false;
+      allowNumericRowIndex = true;
+      lookupColumnRef = 0;
+      valueColumnRef = args[2];
+      interpolationModeRef = args[3];
+      unitRef = args[4];
+    }
   } else if (args.length === 4) {
     const secondArgColumnExists = resolveCsvColumnIndex(table, args[2]) != null;
     const thirdArgColumnExists = resolveCsvColumnIndex(table, args[3]) != null;
@@ -724,18 +774,21 @@ function lookupCsvValue(
       lookupColumnRef = args[2];
       valueColumnRef = args[3];
       interpolationModeRef = undefined;
+      unitRef = undefined;
     } else if (secondArgColumnExists && maybeInterpolationMode != null) {
       isNewSignature = false;
       allowNumericRowIndex = true;
       lookupColumnRef = 0;
       valueColumnRef = args[2];
       interpolationModeRef = args[3];
+      unitRef = undefined;
     } else {
       isNewSignature = true;
       allowNumericRowIndex = false;
       lookupColumnRef = args[2];
       valueColumnRef = args[3];
       interpolationModeRef = undefined;
+      unitRef = args[3]; // Wait, actually args[3] might be unit if it's not a column
     }
   } else if (args.length === 3) {
     isNewSignature = false;
@@ -743,12 +796,14 @@ function lookupCsvValue(
     lookupColumnRef = 0;
     valueColumnRef = args[2];
     interpolationModeRef = undefined;
+    unitRef = undefined;
   } else {
     isNewSignature = false;
     allowNumericRowIndex = true;
     lookupColumnRef = 0;
     valueColumnRef = fallbackValueColumn;
     interpolationModeRef = undefined;
+    unitRef = undefined;
   }
 
   const interpolationMode = parseCsvInterpolationMode(interpolationModeRef);
@@ -783,6 +838,11 @@ function lookupCsvValue(
       throw new Error("csv value is not numeric");
     }
 
+    if (unitRef != null && typeof unitRef === "string" && unitRef.trim()) {
+        const q = createQuantity(numericCellValue, unitRef.trim());
+        if (q.ok) return q.value;
+    }
+
     return numericCellValue;
   }
 
@@ -807,6 +867,11 @@ function lookupCsvValue(
   );
   if (interpolatedValue == null) {
     throw new Error("csv interpolation not possible for requested value");
+  }
+
+  if (unitRef != null && typeof unitRef === "string" && unitRef.trim()) {
+      const q = createQuantity(interpolatedValue, unitRef.trim());
+      if (q.ok) return q.value;
   }
 
   return interpolatedValue;
@@ -1225,10 +1290,17 @@ function expandFunctionLikeMacrosInExpression(
     for (let argIndex = 0; argIndex < macro.params.length; argIndex += 1) {
       const parameterName = macro.params[argIndex];
       const expandedParameterValue = expandedArgumentMap.get(parameterName) ?? "";
+      
+      // Avoid redundant parentheses for simple identifiers or already wrapped expressions
+      const needsParens = !/^[A-Za-z_]\w*$/.test(expandedParameterValue) && 
+                         !(expandedParameterValue.startsWith("(") && expandedParameterValue.endsWith(")"));
+      
+      const replacementValue = needsParens ? `(${expandedParameterValue})` : expandedParameterValue;
+
       expandedBody = replaceMacroParameter(
         expandedBody,
         parameterName,
-        `(${expandedParameterValue})`
+        replacementValue
       );
     }
 
@@ -1246,11 +1318,92 @@ function expandFunctionLikeMacrosInExpression(
       activeCondition
     );
 
-    output += `(${expandedBody})`;
+    // Only wrap the body if it's not a single token and not already wrapped
+    const bodyNeedsParens = !/^[A-Za-z_]\w*$/.test(expandedBody) && 
+                           !(expandedBody.startsWith("(") && expandedBody.endsWith(")"));
+    
+    let segment = bodyNeedsParens ? `(${expandedBody})` : expandedBody;
+    output += removeRedundantParens(segment);
     i = callEnd;
   }
 
   return output;
+}
+
+/**
+ * Removes redundant nested parentheses like ((expr)) -> (expr)
+ * and (token) -> token.
+ */
+export function removeRedundantParens(expr: string): string {
+  let current = expr.trim();
+  if (!current) return current;
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    // 1. (simple_token) -> simple_token
+    // e.g. (y) -> y, (123) -> 123
+    // We only replace if not preceded by an identifier (which would be a function call)
+    const nextAfterStep1 = current.replace(/(?<![A-Za-z0-9_])\(([A-Za-z_]\w*|\d+(?:\.\d+)?)\)/g, "$1");
+    if (nextAfterStep1 !== current) {
+      current = nextAfterStep1;
+      changed = true;
+    }
+
+    // 2. ((balanced_expr)) -> (balanced_expr)
+    // We look for any occurrences of ((...)) where the inner (...) is balanced.
+    let nextAfterStep2 = "";
+    let step2Changed = false;
+    for (let i = 0; i < current.length; i++) {
+      if (current[i] === "(" && current[i + 1] === "(") {
+        // Potential double paren
+        const end = findClosingParen(current, i + 1);
+        if (end !== -1 && end + 1 < current.length && current[end + 1] === ")") {
+          // Found ((...))
+          const inner = current.slice(i + 1, end + 1);
+          if (isParentheticallyBalanced(inner)) {
+            nextAfterStep2 += inner;
+            i = end + 1; // Skip the second closing paren
+            step2Changed = true;
+            continue;
+          }
+        }
+      }
+      nextAfterStep2 += current[i];
+    }
+    
+    if (step2Changed) {
+      current = nextAfterStep2;
+      changed = true;
+    }
+  }
+
+  return current;
+}
+
+function findClosingParen(text: string, openPos: number): number {
+  let depth = 1;
+  for (let i = openPos + 1; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function isParentheticallyBalanced(expr: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < expr.length; i++) {
+    if (expr[i] === "(") depth++;
+    else if (expr[i] === ")") {
+      depth--;
+      if (depth < 0) return false;
+    }
+  }
+  return depth === 0;
 }
 
 /**
@@ -1860,9 +2013,11 @@ export function resolveSymbol(
 
   // Without a concrete preprocessor context, conditional-only symbols are unsafe to
   // resolve numerically because they can pull in mutually-exclusive branches.
-  if (symbolCondition !== "always" && normalizedActiveCondition === "always") {
+  // RELAXATION: Only block if it's explicitly mutually exclusive with the current condition.
+  // We allow resolving symbols from other conditions if they don't clash, to be more helpful.
+  /*if (symbolCondition !== "always" && normalizedActiveCondition === "always") {
     return null;
-  }
+  }*/
 
   if (!conditionsCanOverlap(normalizedActiveCondition, symbolCondition)) {
     return null;
@@ -1984,7 +2139,8 @@ export function expandExpression(
   symbolValues: Map<string, number>,
   context: EvaluationContext = {},
   stackStats: SymbolResolutionStats = createSymbolResolutionStats(),
-  defineConditions: Map<string, string> = new Map<string, string>()
+  defineConditions: Map<string, string> = new Map<string, string>(),
+  symbolUnits: Map<string, string> = new Map<string, string>()
 ): string {
   const functionExpanded = expandFunctionLikeMacrosInExpression(
     expr,
@@ -2019,7 +2175,8 @@ export function expandExpression(
       return token;
     }
 
-    return String(value);
+    const unit = symbolUnits.get(token);
+    return unit ? `${value}[${unit}]` : String(value);
   });
 }
 
@@ -2032,9 +2189,12 @@ export function isPureNumericExpression(expr: string): boolean {
   return NUM_LITERAL_RX.test(sanitized);
 }
 
+const CONTROL_FLOW_RX = /\b(if|while|for|switch|return|do|goto|case|break|continue)\b/;
+
 /**
  * Detects whether expression is composite and worth evaluating for preview.
  * Composite means it contains operators and/or resolvable tokens.
+ * We also exclude lines that look like statements (control flow keywords).
  */
 export function isCompositeExpression(
   expr: string,
@@ -2043,6 +2203,11 @@ export function isCompositeExpression(
 ): boolean {
   const sanitized = stripComments(expr).trim();
   if (!sanitized) {
+    return false;
+  }
+
+  // Exclude non-expression macros (e.g. do {} while(0))
+  if (CONTROL_FLOW_RX.test(sanitized)) {
     return false;
   }
 
@@ -2077,6 +2242,73 @@ function pickCompositePreviewError(
   return null;
 }
 
+function buildUnitAwarePreview(
+  expression: string,
+  symbolValues: Map<string, number>,
+  allDefines: Map<string, string>,
+  functionDefines: Map<string, FunctionMacroDefinition>,
+  context: EvaluationContext,
+  defineConditions: Map<string, string>,
+  symbolUnits: Map<string, string>,
+  resolvedMap: Map<string, number>,
+  stackStats: SymbolResolutionStats
+): { displayValue: number; displayUnit: string } | null {
+  if (symbolUnits.size === 0) {
+    return null;
+  }
+
+  const evaluated = evaluateExpression(expression, {
+    resolveIdentifier: (identifier: string) => {
+      const directValue = symbolValues.get(identifier);
+      if (typeof directValue === "number" && Number.isFinite(directValue)) {
+        const directQuantity = createQuantity(directValue, symbolUnits.get(identifier));
+        return directQuantity.ok ? directQuantity.value : undefined;
+      }
+
+      const resolvedValue = resolveSymbol(
+        identifier,
+        allDefines,
+        functionDefines,
+        resolvedMap,
+        symbolValues,
+        context,
+        stackStats,
+        new Set<string>(),
+        defineConditions
+      );
+      if (typeof resolvedValue !== "number" || !Number.isFinite(resolvedValue)) {
+        return undefined;
+      }
+
+      const resolvedQuantity = createQuantity(
+        resolvedValue,
+        symbolUnits.get(identifier)
+      );
+      return resolvedQuantity.ok ? resolvedQuantity.value : undefined;
+    },
+    resolveLookup: (functionName, args) =>
+      lookupCsvValue(args as unknown[], context.csvTables),
+  });
+  if (!evaluated.ok) {
+    return null;
+  }
+
+  const displayUnit = toDisplayUnit(evaluated.quantity);
+  if (!displayUnit) {
+    return null;
+  }
+
+  const normalized = normalizeUnit(toDisplayValue(evaluated.quantity), displayUnit);
+  if (!normalized.unit || normalized.unit.trim().length === 0) {
+    return null;
+  }
+
+  return {
+    displayValue: normalized.value,
+    displayUnit: normalized.unit,
+  };
+}
+
 /**
  * Resolves function-like macros and known symbols, then tries to simplify numeric fragments.
  */
@@ -2086,13 +2318,17 @@ export function buildCompositeExpressionPreview(
   allDefines: Map<string, string>,
   functionDefines: Map<string, FunctionMacroDefinition> = new Map(),
   context: EvaluationContext = {},
-  defineConditions: Map<string, string> = new Map<string, string>()
-): {
-  expanded: string;
-  value: number | null;
-  error: CompositeExpressionPreviewError | null;
-} {
+  defineConditions: Map<string, string> = new Map<string, string>(),
+  symbolUnits: Map<string, string> = new Map<string, string>()
+): CompositeExpressionPreview {
   let expanded = stripComments(expr);
+  if (CONTROL_FLOW_RX.test(expanded)) {
+    return {
+      expanded: expr,
+      value: null,
+      error: { kind: "other", message: "non-expression macro" },
+    };
+  }
   const resolvedMap = new Map<string, number>();
   const stackStats = createSymbolResolutionStats();
 
@@ -2109,13 +2345,29 @@ export function buildCompositeExpressionPreview(
     defineConditions
   );
 
+  // Unit-aware pass runs on macro-expanded text before numeric replacement.
+  // This keeps AST parsing independent from presentation suffixes like [A].
+  const unitAwareExpanded = resolveInlineLookups(expanded, context);
+  const unitAwarePreview = buildUnitAwarePreview(
+    unitAwareExpanded,
+    symbolValues,
+    allDefines,
+    functionDefines,
+    context,
+    defineConditions,
+    symbolUnits,
+    resolvedMap,
+    stackStats
+  );
+
   expanded = replaceIdentifiersOutsideStrings(expanded, (token, meta) => {
     if (meta.prevChar === ".") {
       return token;
     }
 
     if (symbolValues.has(token)) {
-      return String(symbolValues.get(token));
+      const val = symbolValues.get(token);
+      return String(val);
     }
 
     const value = resolveSymbol(
@@ -2184,6 +2436,7 @@ export function buildCompositeExpressionPreview(
   
   // One more simplify pass to clean up numbers
   simplifiedExpanded = simplifyNumericFragments(simplifiedExpanded, context);
+  simplifiedExpanded = removeRedundantParens(simplifiedExpanded);
   // console.log("STEP 4 - final simplified:", simplifiedExpanded);
   
   const errors: unknown[] = [];
@@ -2195,6 +2448,8 @@ export function buildCompositeExpressionPreview(
       expanded: unwrapParens(simplifiedExpanded),
       value,
       error: null,
+      displayValue: unitAwarePreview?.displayValue,
+      displayUnit: unitAwarePreview?.displayUnit,
     };
   } catch (error) {
     // console.log("EVAL FAILED on evaluableExpanded:", error);
@@ -2206,6 +2461,8 @@ export function buildCompositeExpressionPreview(
         expanded: unwrapParens(simplifiedExpanded),
         value,
         error: null,
+        displayValue: unitAwarePreview?.displayValue,
+        displayUnit: unitAwarePreview?.displayUnit,
       };
     } catch (nextError) {
       // console.log("EVAL FAILED on simplifiedExpanded:", nextError);
@@ -2214,6 +2471,8 @@ export function buildCompositeExpressionPreview(
         expanded: unwrapParens(simplifiedExpanded),
         value: null,
         error: pickCompositePreviewError(errors),
+        displayValue: unitAwarePreview?.displayValue,
+        displayUnit: unitAwarePreview?.displayUnit,
       };
     }
   }

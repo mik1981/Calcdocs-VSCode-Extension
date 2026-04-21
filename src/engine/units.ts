@@ -3,6 +3,7 @@ export type DimensionVector = {
   L: number;
   T: number;
   I: number;
+  K: number;
 };
 
 export type UnitSpec = {
@@ -24,7 +25,7 @@ export type UnitResult<T> =
   | { ok: false; error: string };
 
 const EPSILON = 1e-12;
-const DIMENSIONLESS: DimensionVector = { M: 0, L: 0, T: 0, I: 0 };
+const DIMENSIONLESS: DimensionVector = { M: 0, L: 0, T: 0, I: 0, K: 0 };
 
 function cloneDimension(source: DimensionVector): DimensionVector {
   return {
@@ -32,6 +33,7 @@ function cloneDimension(source: DimensionVector): DimensionVector {
     L: source.L,
     T: source.T,
     I: source.I,
+    K: source.K,
   };
 }
 
@@ -44,6 +46,7 @@ export function addDimensions(
     L: left.L + right.L,
     T: left.T + right.T,
     I: left.I + right.I,
+    K: left.K + right.K,
   };
 }
 
@@ -56,6 +59,7 @@ export function subtractDimensions(
     L: left.L - right.L,
     T: left.T - right.T,
     I: left.I - right.I,
+    K: left.K - right.K,
   };
 }
 
@@ -67,7 +71,8 @@ export function dimensionsEqual(
     Math.abs(left.M - right.M) < EPSILON &&
     Math.abs(left.L - right.L) < EPSILON &&
     Math.abs(left.T - right.T) < EPSILON &&
-    Math.abs(left.I - right.I) < EPSILON
+    Math.abs(left.I - right.I) < EPSILON &&
+    Math.abs(left.K - right.K) < EPSILON
   );
 }
 
@@ -101,21 +106,25 @@ export function formatDimension(dimension: DimensionVector): string {
   if (Math.abs(dimension.I) > EPSILON) {
     parts.push(`I^${formatExponent(dimension.I)}`);
   }
+  if (Math.abs(dimension.K) > EPSILON) {
+    parts.push(`K^${formatExponent(dimension.K)}`);
+  }
 
   return parts.join(" * ");
 }
 
-function dim(M: number, L: number, T: number, I: number): DimensionVector {
-  return { M, L, T, I };
+function dim(M: number, L: number, T: number, I: number, K: number = 0): DimensionVector {
+  return { M, L, T, I, K };
 }
 
-const UNIT_SPEC_LIST: UnitSpec[] = [
+export const UNIT_SPEC_LIST: UnitSpec[] = [
   // Dimensionless / ratios / angles
   { token: "count", canonical: "count", factorToSi: 1, dimension: dim(0, 0, 0, 0) },
   { token: "ratio", canonical: "ratio", factorToSi: 1, dimension: dim(0, 0, 0, 0) },
   { token: "%", canonical: "%", factorToSi: 0.01, dimension: dim(0, 0, 0, 0) },
   { token: "ppm", canonical: "ppm", factorToSi: 1e-6, dimension: dim(0, 0, 0, 0) },
   { token: "ppb", canonical: "ppb", factorToSi: 1e-9, dimension: dim(0, 0, 0, 0) },
+  { token: "ppt", canonical: "ppt", factorToSi: 1e-12, dimension: dim(0, 0, 0, 0) },
   { token: "rad", canonical: "rad", factorToSi: 1, dimension: dim(0, 0, 0, 0) },
   { token: "deg", canonical: "deg", factorToSi: Math.PI / 180, dimension: dim(0, 0, 0, 0) },
 
@@ -135,8 +144,12 @@ const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "mm", canonical: "mm", factorToSi: 1e-3, dimension: dim(0, 1, 0, 0) },
   { token: "um", canonical: "um", factorToSi: 1e-6, dimension: dim(0, 1, 0, 0) },
   { token: "nm", canonical: "nm", factorToSi: 1e-9, dimension: dim(0, 1, 0, 0) },
+  { token: "pm", canonical: "pm", factorToSi: 1e-12, dimension: dim(0, 1, 0, 0) },
   { token: "km", canonical: "km", factorToSi: 1e3, dimension: dim(0, 1, 0, 0) },
   { token: "in", canonical: "in", factorToSi: 0.0254, dimension: dim(0, 1, 0, 0) },
+  { token: "uin", canonical: "uin", factorToSi: 0.0254e-6, dimension: dim(0, 1, 0, 0) },
+  { token: "mil", canonical: "mil", factorToSi: 0.0254e-3, dimension: dim(0, 1, 0, 0) },
+  { token: "thou", canonical: "thou", factorToSi: 0.0254e-3, dimension: dim(0, 1, 0, 0) },
   { token: "ft", canonical: "ft", factorToSi: 0.3048, dimension: dim(0, 1, 0, 0) },
   { token: "yd", canonical: "yd", factorToSi: 0.9144, dimension: dim(0, 1, 0, 0) },
   { token: "mi", canonical: "mi", factorToSi: 1609.344, dimension: dim(0, 1, 0, 0) },
@@ -149,18 +162,23 @@ const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "in2", canonical: "in2", factorToSi: 0.0254 ** 2, dimension: dim(0, 2, 0, 0) },
   { token: "ft2", canonical: "ft2", factorToSi: 0.3048 ** 2, dimension: dim(0, 2, 0, 0) },
   { token: "yd2", canonical: "yd2", factorToSi: 0.9144 ** 2, dimension: dim(0, 2, 0, 0) },
+  { token: "ac", canonical: "ac", factorToSi: 4046.8564224, dimension: dim(0, 2, 0, 0) },
+  { token: "ha", canonical: "ha", factorToSi: 10000, dimension: dim(0, 2, 0, 0) },
 
   // Volume
   { token: "m3", canonical: "m3", factorToSi: 1, dimension: dim(0, 3, 0, 0) },
   { token: "l", canonical: "L", factorToSi: 1e-3, dimension: dim(0, 3, 0, 0) },
   { token: "ml", canonical: "mL", factorToSi: 1e-6, dimension: dim(0, 3, 0, 0) },
+  { token: "ul", canonical: "uL", factorToSi: 1e-9, dimension: dim(0, 3, 0, 0) },
   { token: "cm3", canonical: "cm3", factorToSi: 1e-6, dimension: dim(0, 3, 0, 0) },
   { token: "in3", canonical: "in3", factorToSi: 0.0254 ** 3, dimension: dim(0, 3, 0, 0) },
   { token: "ft3", canonical: "ft3", factorToSi: 0.3048 ** 3, dimension: dim(0, 3, 0, 0) },
   { token: "gal", canonical: "gal", factorToSi: 0.003785411784, dimension: dim(0, 3, 0, 0) },
   { token: "qt", canonical: "qt", factorToSi: 0.000946352946, dimension: dim(0, 3, 0, 0) },
   { token: "pt", canonical: "pt", factorToSi: 0.000473176473, dimension: dim(0, 3, 0, 0) },
+  { token: "cup", canonical: "cup", factorToSi: 0.0002365882365, dimension: dim(0, 3, 0, 0) },
   { token: "floz", canonical: "fl oz", factorToSi: 2.95735295625e-5, dimension: dim(0, 3, 0, 0) },
+  { token: "bbl", canonical: "bbl", factorToSi: 0.158987, dimension: dim(0, 3, 0, 0) },
 
   // Speed / acceleration / angular
   { token: "mps", canonical: "m/s", factorToSi: 1, dimension: dim(0, 1, -1, 0) },
@@ -178,8 +196,12 @@ const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "g", canonical: "g", factorToSi: 1e-3, dimension: dim(1, 0, 0, 0) },
   { token: "mg", canonical: "mg", factorToSi: 1e-6, dimension: dim(1, 0, 0, 0) },
   { token: "ug", canonical: "ug", factorToSi: 1e-9, dimension: dim(1, 0, 0, 0) },
+  { token: "tonne", canonical: "tonne", factorToSi: 1000, dimension: dim(1, 0, 0, 0) },
   { token: "lb", canonical: "lb", factorToSi: 0.45359237, dimension: dim(1, 0, 0, 0) },
   { token: "oz", canonical: "oz", factorToSi: 0.028349523125, dimension: dim(1, 0, 0, 0) },
+  { token: "st", canonical: "st", factorToSi: 6.35029318, dimension: dim(1, 0, 0, 0) },
+  { token: "slug", canonical: "slug", factorToSi: 14.5939029, dimension: dim(1, 0, 0, 0) },
+  { token: "gr", canonical: "gr", factorToSi: 64.79891e-6, dimension: dim(1, 0, 0, 0) },
   { token: "tonus", canonical: "ton(US)", factorToSi: 907.18474, dimension: dim(1, 0, 0, 0) },
   { token: "tonuk", canonical: "ton(UK)", factorToSi: 1016.0469088, dimension: dim(1, 0, 0, 0) },
 
@@ -187,21 +209,29 @@ const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "n", canonical: "N", factorToSi: 1, dimension: dim(1, 1, -2, 0) },
   { token: "kn", canonical: "kN", factorToSi: 1e3, dimension: dim(1, 1, -2, 0) },
   { token: "lbf", canonical: "lbf", factorToSi: 4.4482216152605, dimension: dim(1, 1, -2, 0) },
+  { token: "ozf", canonical: "ozf", factorToSi: 0.27801385, dimension: dim(1, 1, -2, 0) },
   { token: "pa", canonical: "Pa", factorToSi: 1, dimension: dim(1, -1, -2, 0) },
+  { token: "hpa", canonical: "hPa", factorToSi: 100, dimension: dim(1, -1, -2, 0) },
   { token: "kpa", canonical: "kPa", factorToSi: 1e3, dimension: dim(1, -1, -2, 0) },
   { token: "mpa", canonical: "MPa", factorToSi: 1e6, dimension: dim(1, -1, -2, 0) },
   { token: "bar", canonical: "bar", factorToSi: 1e5, dimension: dim(1, -1, -2, 0) },
+  { token: "mbar", canonical: "mbar", factorToSi: 100, dimension: dim(1, -1, -2, 0) },
   { token: "atm", canonical: "atm", factorToSi: 101325, dimension: dim(1, -1, -2, 0) },
   { token: "torr", canonical: "torr", factorToSi: 133.322368421, dimension: dim(1, -1, -2, 0) },
+  { token: "mmhg", canonical: "mmHg", factorToSi: 133.322, dimension: dim(1, -1, -2, 0) },
+  { token: "inhg", canonical: "inHg", factorToSi: 3386.389, dimension: dim(1, -1, -2, 0) },
   { token: "psi", canonical: "psi", factorToSi: 6894.757293168, dimension: dim(1, -1, -2, 0) },
   { token: "ksi", canonical: "ksi", factorToSi: 6_894_757.293168, dimension: dim(1, -1, -2, 0) },
   { token: "nmt", canonical: "N*m", factorToSi: 1, dimension: dim(1, 2, -2, 0) },
   { token: "lbfft", canonical: "lbf*ft", factorToSi: 1.3558179483314004, dimension: dim(1, 2, -2, 0) },
+  { token: "lbfin", canonical: "lbf*in", factorToSi: 0.112984829, dimension: dim(1, 2, -2, 0) },
+  { token: "ozfin", canonical: "ozf*in", factorToSi: 0.0070615518, dimension: dim(1, 2, -2, 0) },
 
   // Energy / power
   { token: "j", canonical: "J", factorToSi: 1, dimension: dim(1, 2, -2, 0) },
   { token: "kj", canonical: "kJ", factorToSi: 1e3, dimension: dim(1, 2, -2, 0) },
   { token: "mj", canonical: "MJ", factorToSi: 1e6, dimension: dim(1, 2, -2, 0) },
+  { token: "ev", canonical: "eV", factorToSi: 1.602176634e-19, dimension: dim(1, 2, -2, 0) },
   { token: "cal", canonical: "cal", factorToSi: 4.184, dimension: dim(1, 2, -2, 0) },
   { token: "kcal", canonical: "kcal", factorToSi: 4184, dimension: dim(1, 2, -2, 0) },
   { token: "btu", canonical: "BTU", factorToSi: 1055.05585262, dimension: dim(1, 2, -2, 0) },
@@ -212,6 +242,7 @@ const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "kw", canonical: "kW", factorToSi: 1e3, dimension: dim(1, 2, -3, 0) },
   { token: "mwatt", canonical: "MW", factorToSi: 1e6, dimension: dim(1, 2, -3, 0) },
   { token: "hp", canonical: "hp", factorToSi: 745.6998715822702, dimension: dim(1, 2, -3, 0) },
+  { token: "btuh", canonical: "BTU/h", factorToSi: 1055.05585262 / 3600, dimension: dim(1, 2, -3, 0) },
 
   // Frequency
   { token: "hz", canonical: "Hz", factorToSi: 1, dimension: dim(0, 0, -1, 0) },
@@ -262,17 +293,123 @@ const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "pas", canonical: "Pa*s", factorToSi: 1, dimension: dim(1, -1, -1, 0) },
   { token: "cp", canonical: "cP", factorToSi: 1e-3, dimension: dim(1, -1, -1, 0) },
 
-  // Temperature deltas (linearized)
-  { token: "k", canonical: "K", factorToSi: 1, dimension: dim(0, 0, 0, 0) },
-  { token: "degc", canonical: "degC", factorToSi: 1, dimension: dim(0, 0, 0, 0) },
-  { token: "degf", canonical: "degF", factorToSi: 5 / 9, dimension: dim(0, 0, 0, 0) },
+  // Temperature (using K dimension for deltas/absolute values)
+  { token: "k", canonical: "K", factorToSi: 1, dimension: dim(0, 0, 0, 0, 1) },
+  { token: "degc", canonical: "degC", factorToSi: 1, dimension: dim(0, 0, 0, 0, 1) },
+  { token: "degf", canonical: "degF", factorToSi: 5 / 9, dimension: dim(0, 0, 0, 0, 1) },
+  { token: "rankine", canonical: "R", factorToSi: 5 / 9, dimension: dim(0, 0, 0, 0, 1) },
 ];
 
-const UNIT_SPECS = new Map<string, UnitSpec>(
+export const UNIT_SPECS = new Map<string, UnitSpec>(
   UNIT_SPEC_LIST.map((spec) => [spec.token, spec])
 );
 
-const UNIT_ALIASES = new Map<string, string>([
+export const SCALABLE_UNIT_FAMILY = new Map<string, string>([
+  // Time
+  ["s", "time"],
+  ["ms", "time"],
+  ["us", "time"],
+  ["ns", "time"],
+  // Length
+  ["m", "length"],
+  ["km", "length"],
+  ["dm", "length"],
+  ["cm", "length"],
+  ["mm", "length"],
+  ["um", "length"],
+  ["nm", "length"],
+  ["pm", "length"],
+  ["uin", "length"],
+  ["mil", "length"],
+  ["thou", "length"],
+  // Area / volume
+  ["m2", "area"],
+  ["cm2", "area"],
+  ["mm2", "area"],
+  ["ac", "area"],
+  ["ha", "area"],
+  ["m3", "volume"],
+  ["l", "volume"],
+  ["ml", "volume"],
+  ["ul", "volume"],
+  ["gal", "volume"],
+  ["qt", "volume"],
+  ["pt", "volume"],
+  ["cup", "volume"],
+  ["floz", "volume"],
+  ["bbl", "volume"],
+  // Mass
+  ["kg", "mass"],
+  ["g", "mass"],
+  ["mg", "mass"],
+  ["ug", "mass"],
+  ["tonne", "mass"],
+  ["lb", "mass"],
+  ["oz", "mass"],
+  ["st", "mass"],
+  ["slug", "mass"],
+  ["gr", "mass"],
+  // Pressure / force
+  ["pa", "pressure"],
+  ["hpa", "pressure"],
+  ["kpa", "pressure"],
+  ["mpa", "pressure"],
+  ["bar", "pressure"],
+  ["mbar", "pressure"],
+  ["atm", "pressure"],
+  ["torr", "pressure"],
+  ["psi", "pressure"],
+  ["ksi", "pressure"],
+  ["mmhg", "pressure"],
+  ["inhg", "pressure"],
+  ["n", "force"],
+  ["kn", "force"],
+  ["lbf", "force"],
+  ["ozf", "force"],
+  // Electrical
+  ["a", "current"],
+  ["ma", "current"],
+  ["ua", "current"],
+  ["v", "voltage"],
+  ["mv", "voltage"],
+  ["kv", "voltage"],
+  ["ohm", "resistance"],
+  ["kohm", "resistance"],
+  ["mohm", "resistance"],
+  ["siemens", "conductance"],
+  ["msiemens", "conductance"],
+  ["usiemens", "conductance"],
+  ["f", "capacitance"],
+  ["mf", "capacitance"],
+  ["uf", "capacitance"],
+  ["nf", "capacitance"],
+  ["pf", "capacitance"],
+  ["hry", "inductance"],
+  ["mhry", "inductance"],
+  ["uhry", "inductance"],
+  ["nhry", "inductance"],
+  // Frequency / power / energy
+  ["hz", "frequency"],
+  ["khz", "frequency"],
+  ["mhz", "frequency"],
+  ["ghz", "frequency"],
+  ["w", "power"],
+  ["mw", "power"],
+  ["kw", "power"],
+  ["mwatt", "power"],
+  ["j", "energy"],
+  ["kj", "energy"],
+  ["mj", "energy"],
+  ["t", "magnetic_flux_density"],
+  ["mt", "magnetic_flux_density"],
+  // Temperature
+  ["k", "temperature"],
+  ["degc", "temperature"],
+  ["degf", "temperature"],
+  ["rankine", "temperature"],
+]);
+
+export const UNIT_ALIASES = new Map<string, string>([
   // Dimensionless and ratios
   ["count", "count"],
   ["counts", "count"],
@@ -281,6 +418,7 @@ const UNIT_ALIASES = new Map<string, string>([
   ["percentage", "%"],
   ["ppm", "ppm"],
   ["ppb", "ppb"],
+  ["ppt", "ppt"],
   ["deg", "deg"],
   ["degree", "deg"],
   ["degrees", "deg"],
@@ -319,11 +457,22 @@ const UNIT_ALIASES = new Map<string, string>([
   ["cm", "cm"],
   ["mm", "mm"],
   ["um", "um"],
+  ["micron", "um"],
+  ["microns", "um"],
   ["nm", "nm"],
+  ["nanometer", "nm"],
+  ["pm", "pm"],
+  ["picometer", "pm"],
   ["km", "km"],
   ["in", "in"],
   ["inch", "in"],
   ["inches", "in"],
+  ["uin", "uin"],
+  ["microinch", "uin"],
+  ["microinches", "uin"],
+  ["mil", "mil"],
+  ["mils", "mil"],
+  ["thou", "thou"],
   ["ft", "ft"],
   ["foot", "ft"],
   ["feet", "ft"],
@@ -350,6 +499,12 @@ const UNIT_ALIASES = new Map<string, string>([
   ["ft^2", "ft2"],
   ["yd2", "yd2"],
   ["yd^2", "yd2"],
+  ["ac", "ac"],
+  ["acre", "ac"],
+  ["acres", "ac"],
+  ["ha", "ha"],
+  ["hectare", "ha"],
+  ["hectares", "ha"],
   ["m3", "m3"],
   ["m^3", "m3"],
   ["cm3", "cm3"],
@@ -368,6 +523,11 @@ const UNIT_ALIASES = new Map<string, string>([
   ["milliliters", "ml"],
   ["millilitre", "ml"],
   ["millilitres", "ml"],
+  ["ul", "ul"],
+  ["microliter", "ul"],
+  ["microliters", "ul"],
+  ["microlitre", "ul"],
+  ["microlitres", "ul"],
   ["gal", "gal"],
   ["gallon", "gal"],
   ["gallons", "gal"],
@@ -377,11 +537,16 @@ const UNIT_ALIASES = new Map<string, string>([
   ["pt", "pt"],
   ["pint", "pt"],
   ["pints", "pt"],
+  ["cup", "cup"],
+  ["cups", "cup"],
   ["floz", "floz"],
   ["fl_oz", "floz"],
   ["fl-oz", "floz"],
   ["fluidounce", "floz"],
   ["fluidounces", "floz"],
+  ["bbl", "bbl"],
+  ["barrel", "bbl"],
+  ["barrels", "bbl"],
 
   // Speed / acceleration / frequency
   ["mps", "mps"],
@@ -397,6 +562,25 @@ const UNIT_ALIASES = new Map<string, string>([
   ["in/s", "ips"],
   ["knot", "knot"],
   ["knots", "knot"],
+  ["volt", "v"],
+  ["volts", "v"],
+  ["amp", "a"],
+  ["amps", "a"],
+  ["ampere", "a"],
+  ["amperes", "a"],
+  ["ohm", "ohm"],
+  ["ohms", "ohm"],
+  ["henry", "hry"],
+  ["mhenry", "mhry"],
+  ["uhenry", "uhry"],
+  ["nhenry", "nhry"],
+  ["mh", "mhry"],
+  ["uh", "uhry"],
+  ["nh", "nhry"],
+  ["farad", "f"],
+  ["farads", "f"],
+  ["watt", "w"],
+  ["watts", "w"],
   ["mps2", "mps2"],
   ["m/s2", "mps2"],
   ["m/s^2", "mps2"],
@@ -416,6 +600,9 @@ const UNIT_ALIASES = new Map<string, string>([
   ["grams", "g"],
   ["mg", "mg"],
   ["ug", "ug"],
+  ["tonne", "tonne"],
+  ["metric-ton", "tonne"],
+  ["mt", "tonne"],
   ["lb", "lb"],
   ["lbs", "lb"],
   ["pound", "lb"],
@@ -423,6 +610,14 @@ const UNIT_ALIASES = new Map<string, string>([
   ["oz", "oz"],
   ["ounce", "oz"],
   ["ounces", "oz"],
+  ["st", "st"],
+  ["stone", "st"],
+  ["stones", "st"],
+  ["slug", "slug"],
+  ["slugs", "slug"],
+  ["gr", "gr"],
+  ["grain", "gr"],
+  ["grains", "gr"],
   ["tonus", "tonus"],
   ["ton_us", "tonus"],
   ["tonuk", "tonuk"],
@@ -434,9 +629,13 @@ const UNIT_ALIASES = new Map<string, string>([
   ["newtons", "n"],
   ["kn", "kn"],
   ["lbf", "lbf"],
+  ["ozf", "ozf"],
   ["pa", "pa"],
   ["pascal", "pa"],
   ["pascals", "pa"],
+  ["hpa", "hpa"],
+  ["hectopascal", "hpa"],
+  ["hectopascals", "hpa"],
   ["kpa", "kpa"],
   ["kilopascal", "kpa"],
   ["kilopascals", "kpa"],
@@ -445,10 +644,15 @@ const UNIT_ALIASES = new Map<string, string>([
   ["megapascals", "mpa"],
   ["bar", "bar"],
   ["bars", "bar"],
+  ["mbar", "mbar"],
+  ["millibar", "mbar"],
+  ["millibars", "mbar"],
   ["atm", "atm"],
   ["atmosphere", "atm"],
   ["atmospheres", "atm"],
   ["torr", "torr"],
+  ["mmhg", "mmhg"],
+  ["inhg", "inhg"],
   ["psi", "psi"],
   ["ksi", "ksi"],
   ["nmt", "nmt"],
@@ -457,6 +661,10 @@ const UNIT_ALIASES = new Map<string, string>([
   ["newtonmeters", "nmt"],
   ["lbfft", "lbfft"],
   ["lbf*ft", "lbfft"],
+  ["lbfin", "lbfin"],
+  ["lbf*in", "lbfin"],
+  ["ozfin", "ozfin"],
+  ["ozf*in", "ozfin"],
 
   // Energy / power
   ["j", "j"],
@@ -464,6 +672,9 @@ const UNIT_ALIASES = new Map<string, string>([
   ["joules", "j"],
   ["kj", "kj"],
   ["mj", "mj"],
+  ["ev", "ev"],
+  ["electronvolt", "ev"],
+  ["electronvolts", "ev"],
   ["cal", "cal"],
   ["kcal", "kcal"],
   ["btu", "btu"],
@@ -477,6 +688,8 @@ const UNIT_ALIASES = new Map<string, string>([
   ["mwatt", "mwatt"],
   ["hp", "hp"],
   ["horsepower", "hp"],
+  ["btuh", "btuh"],
+  ["btu/h", "btuh"],
 
   // Flow
   ["lpm", "lpm"],
@@ -547,6 +760,8 @@ const UNIT_ALIASES = new Map<string, string>([
   ["celsius", "degc"],
   ["degf", "degf"],
   ["fahrenheit", "degf"],
+  ["rankine", "rankine"],
+  ["r", "rankine"],
 ]);
 
 export function normalizeUnitToken(rawUnit: string): string {
@@ -577,6 +792,24 @@ export function getUnitSpec(rawUnit: string): UnitSpec | undefined {
   const canonicalToken = UNIT_ALIASES.get(normalized) ?? normalized;
   return UNIT_SPECS.get(canonicalToken);
 }
+
+export function getUnitFamily(rawUnit: string): string | undefined {
+  const spec = getUnitSpec(rawUnit);
+  if (!spec) {
+    return undefined;
+  }
+  return SCALABLE_UNIT_FAMILY.get(spec.token);
+}
+
+export const UNIT_SCALE_FACTORS = new Map<string, number>(
+  UNIT_SPEC_LIST.map((spec) => [spec.token, spec.factorToSi])
+);
+
+export const UNITS = Array.from(UNIT_SPECS.keys());
+
+export const UNIT_DIM = new Map<string, DimensionVector>(
+  UNIT_SPEC_LIST.map((spec) => [spec.token, spec.dimension])
+);
 
 function buildCompositeUnit(
   left: string | undefined,
@@ -856,6 +1089,93 @@ export function toDisplayUnit(quantity: Quantity): string | undefined {
   }
 
   return formatDimension(quantity.dimension);
+}
+
+function scoreNormalizedMagnitude(absValue: number): number {
+  if (!Number.isFinite(absValue) || absValue === 0) {
+    return 0;
+  }
+
+  const logMagnitude = Math.log10(absValue);
+  let score = Math.abs(logMagnitude - 1.5);
+  if (absValue < 1 || absValue >= 1000) {
+    score += 2;
+  }
+
+  return score;
+}
+
+function trimUnitBrackets(rawUnit: string): string {
+  return rawUnit.trim().replace(/^\[+/, "").replace(/\]+$/, "").trim();
+}
+
+/**
+ * Chooses a human-friendly representation for a numeric value with unit.
+ * Example: normalizeUnit(24000, "mA") -> { value: 24, unit: "A" }.
+ */
+export function normalizeUnit(
+  value: number,
+  rawUnit?: string
+): { value: number; unit?: string } {
+  if (!Number.isFinite(value)) {
+    return {
+      value,
+      unit: rawUnit?.trim(),
+    };
+  }
+
+  if (!rawUnit || rawUnit.trim().length === 0) {
+    return {
+      value,
+    };
+  }
+
+  const cleanedUnit = trimUnitBrackets(rawUnit);
+  const sourceSpec = getUnitSpec(cleanedUnit);
+  if (!sourceSpec) {
+    return {
+      value,
+      unit: cleanedUnit || undefined,
+    };
+  }
+
+  const family = SCALABLE_UNIT_FAMILY.get(sourceSpec.token);
+  if (!family) {
+    return {
+      value,
+      unit: sourceSpec.canonical,
+    };
+  }
+
+  const valueSi = value * sourceSpec.factorToSi;
+  let bestSpec = sourceSpec;
+  let bestScore = scoreNormalizedMagnitude(Math.abs(value));
+
+  for (const candidate of UNIT_SPEC_LIST) {
+    if (SCALABLE_UNIT_FAMILY.get(candidate.token) !== family) {
+      continue;
+    }
+
+    if (!dimensionsEqual(candidate.dimension, sourceSpec.dimension)) {
+      continue;
+    }
+
+    const candidateValue = valueSi / candidate.factorToSi;
+    if (!Number.isFinite(candidateValue)) {
+      continue;
+    }
+
+    const score = scoreNormalizedMagnitude(Math.abs(candidateValue));
+    if (score + EPSILON < bestScore) {
+      bestScore = score;
+      bestSpec = candidate;
+    }
+  }
+
+  return {
+    value: valueSi / bestSpec.factorToSi,
+    unit: bestSpec.canonical,
+  };
 }
 
 export function applyOutputUnit(
