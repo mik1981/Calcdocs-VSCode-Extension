@@ -90,7 +90,9 @@ export function clearCppParserCache(): void {
 }
 
 function normalizeCacheKey(filePath: string): string {
-  return path.resolve(filePath).toLowerCase();
+  const resolved = path.resolve(filePath);
+  // Solo Windows ha filesystem case-insensitive di default
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 async function getFileStamp(filePath: string, output?: ColoredOutput): Promise<FileStamp | null> {
@@ -782,6 +784,70 @@ export function parseCppSymbolDefinition(
 }
 
 /**
+ * Extracts enum member name/value pairs from comment-stripped C source text.
+ * Handles explicit assignments and auto-increment (e.g. SCREEN_OFF = 0, SCREEN_ON).
+ */
+function extractEnumMembers(
+  strippedText: string
+): Array<{ name: string; value: number; line: number }> {
+  const results: Array<{ name: string; value: number; line: number }> = [];
+  const enumOpenRx = /\benum\b[^{;]*\{/g;
+  let startMatch: RegExpExecArray | null;
+
+  while ((startMatch = enumOpenRx.exec(strippedText)) !== null) {
+    const openPos = strippedText.indexOf('{', startMatch.index);
+    if (openPos === -1) continue;
+
+    // Walk to the matching closing brace
+    let depth = 1;
+    let pos = openPos + 1;
+    while (pos < strippedText.length && depth > 0) {
+      const ch = strippedText[pos];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      pos++;
+    }
+
+    const blockText = strippedText.slice(openPos + 1, pos - 1);
+    const baseLineNum = (strippedText.slice(0, openPos + 1).match(/\n/g) ?? []).length;
+
+    let autoValue = 0;
+    const blockLines = blockText.split('\n');
+
+    for (let li = 0; li < blockLines.length; li++) {
+      // A line can have multiple comma-separated members (unusual but valid)
+      for (const part of blockLines[li].split(',')) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+
+        // IDENTIFIER  [= expression]
+        const m = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*(.+))?$/);
+        if (!m) continue;
+
+        const name = m[1];
+        if (/^(sizeof|typeof|__typeof__|__attribute__|typedef|struct|union|enum|const|volatile|static|extern|inline|if|else|while|for|do|return)$/.test(name)) {
+          continue;
+        }
+
+        if (m[2] !== undefined) {
+          try {
+            const val = safeEval(m[2].trim());
+            if (Number.isFinite(val)) autoValue = Math.trunc(val);
+          } catch {
+            // Keep current autoValue when expression can't be evaluated
+          }
+        }
+
+        results.push({ name, value: autoValue, line: baseLineNum + li });
+        autoValue++;
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
  * Scans source files and collects:
  * - raw object-like #define expressions
  * - function-like #define macros
@@ -942,6 +1008,28 @@ export async function collectDefinesAndConsts(
       }
 
       braceDepth = updateBraceDepth(braceDepth, lineWithoutComments);
+    }
+
+    // ── Enum members ──────────────────────────────────────────────────────────
+    // Run once per file after line-by-line scanning so enum constants are
+    // available as symbol values (enables ghost expansion of e.g. SCREEN_OFF).
+    const strippedForEnums = stripComments(text);
+    for (const member of extractEnumMembers(strippedForEnums)) {
+      if (seenDefinesInFile.has(member.name)) continue;
+      seenDefinesInFile.add(member.name);
+      if (!defines.has(member.name)) {
+        defines.set(member.name, String(member.value));
+      }
+      if (!consts.has(member.name)) {
+        consts.set(member.name, member.value);
+      }
+      defineConditions.set(member.name, 'always');
+      if (!locations.has(member.name)) {
+        locations.set(member.name, {
+          file: path.relative(workspaceRoot, filePath),
+          line: member.line + 1,
+        });
+      }
     }
   }
 

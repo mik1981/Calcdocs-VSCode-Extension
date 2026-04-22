@@ -50,10 +50,13 @@ You instantly see:
 
 ## Macro and constant generation header output by quick menu
 
-| Generation | Quick menu |
-| :---: | :---: |
-| **Generation** | ![Macro and constant generation header output](./resources/generate_header.gif) | 
-| **Quick menu** | ![Macro and constant generation header output](./resources/quick_menu.png) |
+| Header file generation | 
+| :---: |
+![Macro and constant generation header output](./resources/generate_header.gif) |  
+
+| Quick menu |
+| :---: |
+| ![Macro and constant generation header output](./resources/quick_menu.png) |
 
 ---
 

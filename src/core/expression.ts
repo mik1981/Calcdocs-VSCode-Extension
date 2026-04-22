@@ -1342,10 +1342,13 @@ export function removeRedundantParens(expr: string): string {
   while (changed) {
     changed = false;
 
-    // 1. (simple_token) -> simple_token
-    // e.g. (y) -> y, (123) -> 123
-    // We only replace if not preceded by an identifier (which would be a function call)
-    const nextAfterStep1 = current.replace(/(?<![A-Za-z0-9_])\(([A-Za-z_]\w*|\d+(?:\.\d+)?)\)/g, "$1");
+    // Step 1: rimuove parens attorno a singoli atomi.
+    // Il negative lookahead (?!\s*[A-Za-z0-9_(]) evita di strippare cast C
+    // come (uint16_t) quando sono immediatamente seguiti da un operando.
+    const nextAfterStep1 = current.replace(
+      /(?<![A-Za-z0-9_])\(([A-Za-z_]\w*|\d+(?:\.\d+)?)\)(?!\s*[A-Za-z0-9_(])/g,
+      "$1"
+    );
     if (nextAfterStep1 !== current) {
       current = nextAfterStep1;
       changed = true;
@@ -1357,22 +1360,37 @@ export function removeRedundantParens(expr: string): string {
     let step2Changed = false;
     for (let i = 0; i < current.length; i++) {
       if (current[i] === "(" && current[i + 1] === "(") {
-        // Potential double paren
-        const end = findClosingParen(current, i + 1);
-        if (end !== -1 && end + 1 < current.length && current[end + 1] === ")") {
-          // Found ((...))
-          const inner = current.slice(i + 1, end + 1);
+        const innerEnd = findClosingParen(current, i + 1);
+
+        // Case A: ((X)) → (X)  [double-wrap classico]
+        if (innerEnd !== -1 && innerEnd + 1 < current.length && current[innerEnd + 1] === ")") {
+          const inner = current.slice(i + 1, innerEnd + 1);
           if (isParentheticallyBalanced(inner)) {
             nextAfterStep2 += inner;
-            i = end + 1; // Skip the second closing paren
+            i = innerEnd + 1;
             step2Changed = true;
             continue;
+          }
+        }
+
+        // Case B: ((TypeName) value) → (TypeName) value
+        // Le macro in C wrappano spesso il cast in parens esterne di sicurezza.
+        if (innerEnd !== -1) {
+          const castContent = current.slice(i + 1, innerEnd + 1);
+          if (/^\([A-Za-z_][A-Za-z0-9_]*\)$/.test(castContent)) {
+            const outerEnd = findClosingParen(current, i);
+            if (outerEnd !== -1) {
+              nextAfterStep2 += current.slice(i + 1, outerEnd);
+              i = outerEnd;
+              step2Changed = true;
+              continue;
+            }
           }
         }
       }
       nextAfterStep2 += current[i];
     }
-    
+
     if (step2Changed) {
       current = nextAfterStep2;
       changed = true;

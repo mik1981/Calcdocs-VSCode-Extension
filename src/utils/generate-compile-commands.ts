@@ -226,13 +226,12 @@ export function generateCompileCommands(config: Configuration): GenerationResult
   // 4. COMMANDS (HYBRID MODE)
   // -----------------------------------------------------------------
   for (const absFile of cFiles) {
-    const relFile = normalize(path.relative(config.projectRoot, absFile));
+    // const relFile = normalize(path.relative(config.projectRoot, absFile));
+    const relFile = path.normalize(absFile);
 
     commands.push({
       directory: projectRootAbs,
-
-      command: `clang -c ${includeFlagsStr} ${baseFlags} ${relFile}`,
-
+      command: `clang -c ${includeFlagsStr} ${baseFlags} ${relFile.replace(/\\/g, '/')}`,
       file: relFile
     });
   }

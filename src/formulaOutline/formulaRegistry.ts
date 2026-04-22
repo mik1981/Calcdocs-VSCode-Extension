@@ -49,7 +49,7 @@ export class FormulaRegistry {
     if (!this.isFormulaFile(doc)) return [];
 
     const lines = doc.getText().split(/\r?\n/);
-    const formulas = parseFormulaDocument(lines);
+    const formulas = parseFormulaDocument(lines, doc.uri.fsPath);
     this.formulas.set(uri, formulas);
     return formulas;
   }

@@ -78,6 +78,29 @@ export function collectDocumentSymbolDefinitions(
             isDefineLine: false,
             parsed,
           });
+        } else {
+          // parseCppSymbolDefinition requires "TYPE name = expr" (≥2 left-side tokens).
+          // Plain assignments like `screen_state = SCREEN_OFF;` are silently dropped.
+          // We still want to resolve and display the RHS as a ghost value.
+          const assignMatch = (trimmed + ";").match(
+            /^([A-Za-z_]\w*)\s*=(?!=)\s*(.+);$/
+          );
+          if (assignMatch) {
+            const assignName = assignMatch[1];
+            const assignExpr = assignMatch[2].trim();
+            const isCKeyword =
+              /^(if|else|while|for|do|switch|case|break|continue|return|goto|sizeof|typeof|typedef|struct|union|enum|const|volatile|static|extern|inline|int|char|short|long|float|double|unsigned|signed|void|bool)$/.test(
+                assignName
+              );
+            if (!isCKeyword && assignExpr) {
+              definitions.push({
+                line: startLine,
+                lineText: segment + ";",
+                isDefineLine: false,
+                parsed: { name: assignName, expr: assignExpr },
+              });
+            }
+          }
         }
       }
     }

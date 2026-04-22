@@ -21,14 +21,14 @@
 
 import type { OutlineFormula } from './formulaParser';
 import type { Quantity } from '../engine/units';
+import { preprocessExpression } from '../engine/evaluator';
 
 
 import {
   UNIT_SPECS as ENGINE_UNIT_SPECS,
   SCALABLE_UNIT_FAMILY as ENGINE_SCALABLE_UNIT_FAMILY,
   UNIT_SCALE_FACTORS as ENGINE_UNIT_SCALE_FACTORS,
-  getUnitSpec as getEngineUnitSpec,
-  normalizeUnitToken as normalizeEngineUnitToken
+  createQuantity,
 } from '../engine/units';
 
 type UnitSpec = {
@@ -260,30 +260,36 @@ export type LookupResolver = (
 
 
 // ---------------------------------------------------------------------------
-// Quantity literal preprocessing
-// Converts "6 V" → "6" (SI value), "200 mA" → "0.2", etc.
-// Mirrors replaceInlineQuantityLiterals in inlineCalc.ts but for formulaEvaluator.
+// Unit helper for engine-level `preprocessExpression` wrappers.
+// The engine rewrites quantity literals and suffixes into __unit(value, unit).
 // ---------------------------------------------------------------------------
 
-const QUANTITY_LITERAL_FE_RX =
-  /(?<![A-Za-z0-9_.$])([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s+([A-Za-z%][A-Za-z0-9_%]*)/g;
+function toUnitAwareSiValue(value: unknown, unit: unknown): number {
+  let numericValue = value;
 
-function replaceQuantityLiteralsForEval(expression: string): string {
-  return expression.replace(
-    QUANTITY_LITERAL_FE_RX,
-    (full: string, rawNumeric: string, rawUnit: string) => {
-      const numeric = Number(rawNumeric);
-      if (!Number.isFinite(numeric)) {
-        return full;
-      }
-      const normalized = normalizeEngineUnitToken(rawUnit);
-      const spec = getEngineUnitSpec(normalized);
-      if (!spec) {
-        return full;
-      }
-      return String(numeric * spec.factorToSi);
-    }
-  );
+  if (
+    typeof numericValue === 'object' &&
+    numericValue !== null &&
+    'valueSi' in numericValue &&
+    typeof (numericValue as Quantity).valueSi === 'number'
+  ) {
+    numericValue = (numericValue as Quantity).valueSi;
+  }
+
+  if (typeof numericValue !== 'number' || !Number.isFinite(numericValue)) {
+    throw new Error('__unit() requires numeric value as first argument');
+  }
+
+  if (typeof unit !== 'string') {
+    throw new Error('__unit() requires unit string as second argument');
+  }
+
+  const quantity = createQuantity(numericValue, unit);
+  if (!quantity.ok) {
+    throw new Error(quantity.error);
+  }
+
+  return quantity.value.valueSi;
 }
 
 /**
@@ -304,12 +310,13 @@ export function evaluateFormulaExpression(
   const trimmed = expr.trim();
   if (!trimmed) return null;
 
-  // Preprocess quantity literals: "6 V" → "6" (SI), "200 mA" → "0.2"
-  // This enables expressions like "5 * 6 V" or "10 kHz * 2" to evaluate correctly.
-  const preprocessed = replaceQuantityLiteralsForEval(trimmed);
+  // Reuse the engine preprocessor so diagnostics and ghost values
+  // share the same unit syntax semantics.
+  const preprocessed = preprocessExpression(trimmed);
 
   // Caller variables take precedence over math scope
   const scope: Record<string, unknown> = { ...MATH_SCOPE, ...vars };
+  scope.__unit = (value: unknown, unit: unknown) => toUnitAwareSiValue(value, unit);
 
   if (lookupResolver) {
     scope.csv = (...args: Array<string | number>) => lookupResolver('csv', args, yamlPath);
