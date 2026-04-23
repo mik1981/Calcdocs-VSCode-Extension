@@ -6,6 +6,7 @@ import {
   buildCStylePreview,
   evaluateExpressionPreview,
   formatExpandedPreview,
+  formatPreviewNumberWithFormat,
   normalizeExpandedPreviewText,
   formatPreviewNumber,
 } from "./preview";
@@ -20,7 +21,9 @@ export type CppCodeLensItemKind =
   | "mismatch"
   | "openFormula"
   | "resolvedValue"
-  | "expandedPreview";
+  | "expandedPreview"
+  /** Standalone function-call expression in code body: ghost/hover only, never code lens. */
+  | "functionCall";
 
 export type CppCodeLensItem = {
   line: number;
@@ -82,15 +85,16 @@ function normalizeExpressionForComparison(expression: string): string {
 function buildCastOverflowTitle(
   state: CalcDocsState,
   symbolName: string,
-  error: NonNullable<ReturnType<typeof evaluateExpressionPreview>["error"]>
+  error: NonNullable<ReturnType<typeof evaluateExpressionPreview>["error"]>,
+  numericFormat?: 'decimal' | 'hex' | 'binary'
 ): string {
   const overflow = error.overflow;
   if (!overflow) {
     return `$(error) CalcDocs: ${symbolName} cast overflow: ${error.message}`;
   }
-  const rangeText = `[${formatPreviewNumber(state, overflow.min)}..${formatPreviewNumber(state, overflow.max)}]`;
-  const truncated = formatPreviewNumber(state, overflow.truncatedValue);
-  const input = formatPreviewNumber(state, overflow.inputValue);
+  const rangeText = `[${formatPreviewNumberWithFormat(state, overflow.min, numericFormat)}..${formatPreviewNumberWithFormat(state, overflow.max, numericFormat)}]`;
+  const truncated = formatPreviewNumberWithFormat(state, overflow.truncatedValue, numericFormat);
+  const input = formatPreviewNumberWithFormat(state, overflow.inputValue, numericFormat);
   const fromSuffix =
     overflow.inputValue === overflow.truncatedValue ? "" : ` (from ${input})`;
 
@@ -119,6 +123,10 @@ export function collectCppCodeLensItems(
   for (const definition of definitions) {
     if (items.length >= maxItems) {
       break;
+    }
+
+    if (definition.isFunctionCallStmt) {
+      continue; // Handled in the second pass below
     }
 
     const { line, isDefineLine, parsed } = definition;
@@ -153,7 +161,7 @@ export function collectCppCodeLensItems(
           !pushItem(
             createInfoItem(
               line,
-              buildCastOverflowTitle(state, displayName, preview.error),
+              buildCastOverflowTitle(state, displayName, preview.error, preview.numericFormat),
               "castOverflow"
             )
           )
@@ -209,7 +217,7 @@ export function collectCppCodeLensItems(
         preview.displayUnit.trim().length > 0;
       const rightHandSide = hasUnitDisplay
         ? `${formatPreviewNumber(state, preview.displayValue!)} [${preview.displayUnit}]`
-        : formatPreviewNumber(state, value);
+        : formatPreviewNumberWithFormat(state, value, preview.numericFormat);
       const cLikePreview = buildCStylePreview(
         displayName,
         rightHandSide,
@@ -239,6 +247,47 @@ export function collectCppCodeLensItems(
         break;
       }
     }
+  }
+
+  // ── Second pass: standalone function-call expressions ──────────────────────
+  // These items are "functionCall" kind: shown only as ghost value (never code
+  // lens). The expansion replaces known macro arguments with their values, e.g.
+  //   HAL_delay(COMMENTED)  →  HAL_delay(28)
+  for (const definition of definitions) {
+    if (items.length >= maxItems) {
+      break;
+    }
+
+    if (!definition.isFunctionCallStmt) {
+      continue;
+    }
+
+    const { line, parsed } = definition;
+    const { expr } = parsed;
+    if (!expr) {
+      continue;
+    }
+
+    const preview = evaluateExpressionPreview(state, expr);
+    const expanded = (preview.expanded ?? "").trim();
+    if (!expanded) {
+      continue;
+    }
+
+    const originalNorm = normalizeExpressionForComparison(expr);
+    const expandedNorm = normalizeExpressionForComparison(expanded);
+    if (expandedNorm === originalNorm) {
+      continue; // No actual expansion — nothing useful to show
+    }
+
+    const previewText = formatExpandedPreview(state, expanded, {
+      maxLength: CODELENS_PREVIEW_MAX_LEN,
+    });
+    if (!previewText) {
+      continue;
+    }
+
+    pushItem(createInfoItem(line, `CalcDocs: ${previewText}`, "functionCall"));
   }
 
   return items;

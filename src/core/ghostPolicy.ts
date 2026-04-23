@@ -6,7 +6,11 @@ import { CalcDocsState } from "./state";
 const GHOST_SUPPORTED_LANGUAGE = "c";
 
 function isGhostReplaceableItem(item: CppCodeLensItem): boolean {
-  return item.kind === "resolvedValue" || item.kind === "expandedPreview";
+  return (
+    item.kind === "resolvedValue" ||
+    item.kind === "expandedPreview" ||
+    item.kind === "functionCall" // ghost/hover only, never code lens
+  );
 }
 
 export function shouldRenderGhostInsteadOfCodeLens(
@@ -76,7 +80,11 @@ export function shouldShowCodeLens(
     return false;
   }
 
-  const items = getPotentialGhostItems(document, line, state);
+  // functionCall items are never code lens — exclude them so they don't
+  // cause getLineDisplayPriority to suppress the hover provider.
+  const items = getPotentialGhostItems(document, line, state).filter(
+    (item) => item.kind !== "functionCall"
+  );
   if (items.length === 0) {
     return false;
   }

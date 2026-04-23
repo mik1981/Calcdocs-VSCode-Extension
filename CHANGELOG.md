@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.2.3] - 04/21/2026
+## [0.2.4] - 04/23/2026
+
+- Auto-detect hex or binary view format
+- Added example case 09_function_calls
+
+## [0.2.3] - 04/22/2026
 
 - Added enum support
 - Fixed unit handling in the formula*.yaml evaluator

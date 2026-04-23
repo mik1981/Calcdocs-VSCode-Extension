@@ -1,4 +1,4 @@
-# 🧮 CalcDocs — Instantly See What Your Firmware REALLY Computes **[0.2.2-prerelease]**
+# 🧮 CalcDocs — Instantly See What Your Firmware REALLY Computes **[0.2.4-prerelease]**
 
 [![Version](https://vsmarketplacebadges.dev/version-short/convergo-dev.calcdocs-vscode-extension.svg)](https://visualstudio.com)
 [![Download](https://vsmarketplacebadges.dev/downloads-short/convergo-dev.calcdocs-vscode-extension.svg)](https://visualstudio.com)

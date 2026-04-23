@@ -17,18 +17,18 @@ function clampGhostText(text: string): string {
 export function extractPureGhostValue(title: string, kind: string): string {
   const noIcon = title.replace(/^\$\([^)]+\)\s*/, "");
   const noPrefix = noIcon.replace(/^CalcDocs:\s*/, "").trim();
-  
-  // For expandedPreview: use full stripped preview (shows expression)
-  /*if (kind === "expandedPreview") {
-    return noPrefix;
-  }*/
-  
-  // CASO 1: #define NAME(params) VALUE → pure VALUE
-  //const defineMatch = noPrefix.match(/^#define\s+[^\s]+\s+(.+)$/);
-  // We match #define, then the name with optional params, then the value.
+
+  // Strip #define NAME / #define NAME(params) prefix regardless of kind
   const defineMatch = noPrefix.match(/^#define\s+[A-Za-z_]\w*(?:\s*\([^)]*\))?\s+(.+)$/);
+  const withoutDefine = defineMatch ? defineMatch[1].trim() : noPrefix;
+  
+  // For expandedPreview/functionCall: use full stripped preview (shows expression/structure)
+  if (kind === "expandedPreview" || kind === "functionCall") {
+    return withoutDefine;
+  }
+  
   if (defineMatch) {
-    return defineMatch[1].trim();
+    return withoutDefine;
   }
   
   // CASO 2: NAME = VALUE → pure VALUE
@@ -78,7 +78,9 @@ export class GhostValueProvider {
     }
 
     const maxItemsPerFile = Math.max(1, this.state.cppCodeLens.maxItemsPerFile);
-    const items = collectCppCodeLensItems(document, this.state, maxItemsPerFile);
+    // Ghost values are less invasive than code lenses, so we allow collecting more items
+    // to ensure function calls or assignments later in the file are not truncated.
+    const items = collectCppCodeLensItems(document, this.state, maxItemsPerFile * 4);
     const perLineGhostTexts = new Map<number, string[]>();
 
     for (const item of items) {

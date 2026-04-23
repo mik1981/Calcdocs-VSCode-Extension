@@ -40,6 +40,53 @@ export function toHexString(n: number): string {
   return "0x" + groups.join(separator);
 }
 
+
+export function toBinaryString(n: number): string {
+  if (!isInteger(n) || n < 0) {
+    return "";
+  }
+  if (n === 0) {
+    return "0b0";
+  }
+  const raw = n.toString(2);
+  // Raggruppa le cifre a nibble (4 bit) per leggibilità
+  const padded = raw.padStart(Math.ceil(raw.length / 4) * 4, "0");
+  const groups: string[] = [];
+  for (let i = 0; i < padded.length; i += 4) {
+    groups.push(padded.slice(i, i + 4));
+  }
+  const config = getConfig();
+  const separator = getThousandsSeparatorChar(config.thousandsSeparator);
+  return "0b" + groups.join(separator);
+}
+
+
+/**
+ * Formatta un numero secondo il formato rilevato dall'espressione sorgente:
+ * - 'hex'    → 0x... (interi) o decimale (float)
+ * - 'binary' → 0b... (interi) o decimale (float)
+ * - 'decimal'→ separatore migliaia normale
+ */
+export function formatValueForDisplay(
+  state: CalcDocsState,
+  value: number,
+  format?: 'decimal' | 'hex' | 'binary'
+): string {
+  if (format === 'hex') {
+    const hex = toHexString(value);
+    if (hex) {
+      return hex;
+    }
+  }
+  if (format === 'binary') {
+    const bin = toBinaryString(value);
+    if (bin) {
+      return bin;
+    }
+  }
+  return formatNumbersWithThousandsSeparator(state, String(value));
+}
+
 /**
  * Adds high dot (⋅) as thousands separator to all numbers in a string.
  * Example: "value is 1234567" → "value is 1⋅234⋅567"

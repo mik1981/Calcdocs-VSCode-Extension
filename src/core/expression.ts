@@ -33,12 +33,31 @@ export type CompositeExpressionPreviewError = {
   overflow?: CastOverflowInfo;
 };
 
+export type NumericDisplayFormat = 'decimal' | 'hex' | 'binary';
+
+const HEX_LITERAL_DETECT_RX = /\b0[xX][0-9a-fA-F]/;
+const BINARY_LITERAL_DETECT_RX = /\b0[bB][01]/;
+// & | ^ ~ e ! (non seguiti da =) e shift << >>
+const BITWISE_LOGICAL_OP_DETECT_RX = /[&|^~]|!(?!=)|<<|>>/;
+
+export function detectExpressionNumericFormat(expr: string): NumericDisplayFormat {
+  if (HEX_LITERAL_DETECT_RX.test(expr) || BITWISE_LOGICAL_OP_DETECT_RX.test(expr)) {
+    return 'hex';
+  }
+  if (BINARY_LITERAL_DETECT_RX.test(expr)) {
+    return 'binary';
+  }
+  return 'decimal';
+}
+
 export type CompositeExpressionPreview = {
   expanded: string;
   value: number | null;
   error: CompositeExpressionPreviewError | null;
   displayValue?: number;
   displayUnit?: string;
+  /** Formato numerico suggerito in base al contenuto dell'espressione */
+  numericFormat?: NumericDisplayFormat;
 };
 
 type IdentifierMeta = {
@@ -1096,28 +1115,36 @@ function simplifyNumericFragments(expr: string, context: EvaluationContext): str
   for (let pass = 0; pass < SIMPLIFY_MAX_PASSES; pass += 1) {
     let changed = false;
 
-    output = output.replace(
-      /\(([^()]+)\)/g,
-      (group, inner: string, offset: number, source: string) => {
-        if (!isReducibleNumericFragment(inner)) {
-          return group;
-        }
-
-        try {
-          const value = safeEval(inner, context);
-          changed = true;
-          const formatted = formatPreviewNumber(value);
-          const prefix = source.slice(0, offset);
-          const castPrefixMatch = prefix.match(
-            /\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*$/
-          );
-
-          return castPrefixMatch ? `(${formatted})` : formatted;
-        } catch {
-          return group;
-        }
+  output = output.replace(
+    /\(([^()]+)\)/g,
+    (group, inner: string, offset: number, source: string) => {
+      if (!isReducibleNumericFragment(inner)) {
+        return group;
       }
-    );
+
+      const prefix = source.slice(0, offset);
+
+      // Don't strip parens that are function call arguments (identifier immediately before '(')
+      if (/[A-Za-z0-9_]$/.test(prefix.trimEnd())) {
+        return group;
+      }
+
+      try {
+        const value = safeEval(inner, context);
+        changed = true;
+        const formatted = formatPreviewNumber(value);
+        const castPrefixMatch = prefix.match(
+          /\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*$/
+        );
+
+        return castPrefixMatch ? `(${formatted})` : formatted;
+      } catch {
+        return group;
+      }
+    }
+  );
+
+
 
     output = output.replace(NUMERIC_MUL_DIV_CHAIN_RX, (segment) => {
       if (!isReducibleNumericFragment(segment)) {
@@ -2340,6 +2367,7 @@ export function buildCompositeExpressionPreview(
   symbolUnits: Map<string, string> = new Map<string, string>()
 ): CompositeExpressionPreview {
   let expanded = stripComments(expr);
+  const numericFormat = detectExpressionNumericFormat(expanded);
   if (CONTROL_FLOW_RX.test(expanded)) {
     return {
       expanded: expr,
@@ -2468,6 +2496,7 @@ export function buildCompositeExpressionPreview(
       error: null,
       displayValue: unitAwarePreview?.displayValue,
       displayUnit: unitAwarePreview?.displayUnit,
+      numericFormat,
     };
   } catch (error) {
     // console.log("EVAL FAILED on evaluableExpanded:", error);
@@ -2481,6 +2510,7 @@ export function buildCompositeExpressionPreview(
         error: null,
         displayValue: unitAwarePreview?.displayValue,
         displayUnit: unitAwarePreview?.displayUnit,
+        numericFormat,
       };
     } catch (nextError) {
       // console.log("EVAL FAILED on simplifiedExpanded:", nextError);
@@ -2491,6 +2521,7 @@ export function buildCompositeExpressionPreview(
         error: pickCompositePreviewError(errors),
         displayValue: unitAwarePreview?.displayValue,
         displayUnit: unitAwarePreview?.displayUnit,
+        numericFormat,
       };
     }
   }

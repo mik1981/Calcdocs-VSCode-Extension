@@ -1,10 +1,12 @@
 import {
   buildCompositeExpressionPreview,
   type CompositeExpressionPreviewError,
+  type NumericDisplayFormat,
 } from "./expression";
 import { CalcDocsState } from "./state";
 import {
   formatNumbersWithThousandsSeparator,
+  formatValueForDisplay,
   toHexString,
 } from "../utils/nformat";
 
@@ -14,6 +16,7 @@ export type ExpressionPreview = {
   error: CompositeExpressionPreviewError | null;
   displayValue?: number;
   displayUnit?: string;
+  numericFormat?: NumericDisplayFormat;
 };
 
 type FormatExpandedPreviewOptions = {
@@ -77,6 +80,19 @@ export function formatExpandedPreview(
  */
 export function formatPreviewNumber(state: CalcDocsState, value: number): string {
   return formatNumbersWithThousandsSeparator(state, String(value));
+}
+
+
+/**
+ * Come formatPreviewNumber ma rispetta il formato numerico rilevato
+ * dall'espressione sorgente (hex/binary/decimal).
+ */
+export function formatPreviewNumberWithFormat(
+  state: CalcDocsState,
+  value: number,
+  format?: NumericDisplayFormat
+): string {
+  return formatValueForDisplay(state, value, format);
 }
 
 /**

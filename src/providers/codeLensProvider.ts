@@ -36,6 +36,10 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
     const lenses: vscode.CodeLens[] = [];
 
     for (const item of items) {
+      if (item.kind === "functionCall") {
+        continue; // function-call items: ghost/hover only, never code lens
+      }
+
       if (shouldRenderGhostInsteadOfCodeLens(document, item, this.state)) {
         continue;
       }
