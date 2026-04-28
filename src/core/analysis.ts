@@ -629,7 +629,7 @@ async function appendDefineMismatchDiagnostics(
           const isFunctionLikeMacro = macroParams != null;
           if (
             !isFunctionLikeMacro &&
-            !isCompositeExpression(expr, state.symbolValues, state.allDefines)
+            !isCompositeExpression(expr, state.symbolValues, state.allDefines, state.functionDefines)
           ) {
             const formula = state.formulaIndex.get(name);
             if (formula && typeof formula.valueCalc === "number") {

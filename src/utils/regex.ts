@@ -24,7 +24,8 @@ export const NUM_LITERAL_RX =
 /**
  * Operator presence check for quick composite-expression detection.
  */
-export const OP_RX = /[+\-*/%&|^~<>?:()]/;
+// export const OP_RX = /[+\-*/%&|^~<>?:()]/;
+export const OP_RX = /(\+|\-|\*|\/|%|&|\||\^|~|<<|>>)/;
 
 /**
  * File extensions considered C/C++ sources for analysis.

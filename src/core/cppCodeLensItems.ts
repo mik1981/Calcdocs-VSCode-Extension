@@ -1,7 +1,12 @@
 import * as vscode from "vscode";
 
 import { collectDocumentSymbolDefinitions } from "./documentSymbols";
-import { isCompositeExpression, unwrapParens, removeRedundantParens } from "./expression";
+import { 
+  isCompositeExpression, 
+  unwrapParens, 
+  removeRedundantParens, 
+  NumericDisplayFormat 
+} from "./expression";
 import {
   buildCStylePreview,
   evaluateExpressionPreview,
@@ -86,7 +91,7 @@ function buildCastOverflowTitle(
   state: CalcDocsState,
   symbolName: string,
   error: NonNullable<ReturnType<typeof evaluateExpressionPreview>["error"]>,
-  numericFormat?: 'decimal' | 'hex' | 'binary'
+  numericFormat?: NumericDisplayFormat //'decimal' | 'hex' | 'binary'
 ): string {
   const overflow = error.overflow;
   if (!overflow) {
@@ -175,7 +180,7 @@ export function collectCppCodeLensItems(
 
     if (
       !isFunctionLikeMacro &&
-      !isCompositeExpression(expr, state.symbolValues, state.allDefines)
+      !isCompositeExpression(expr, state.symbolValues, state.allDefines, state.functionDefines)
     ) {
       const formula = state.formulaIndex.get(name);
       const mismatch =

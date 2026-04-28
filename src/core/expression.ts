@@ -33,19 +33,82 @@ export type CompositeExpressionPreviewError = {
   overflow?: CastOverflowInfo;
 };
 
-export type NumericDisplayFormat = 'decimal' | 'hex' | 'binary';
+export type NumericDisplayFormat = 'decimal' | 'hex' | 'binary' | 'boolean';
 
 const HEX_LITERAL_DETECT_RX = /\b0[xX][0-9a-fA-F]/;
 const BINARY_LITERAL_DETECT_RX = /\b0[bB][01]/;
 // & | ^ ~ e ! (non seguiti da =) e shift << >>
-const BITWISE_LOGICAL_OP_DETECT_RX = /[&|^~]|!(?!=)|<<|>>/;
+const BITWISE_OP_DETECT_RX = /[&|^~]|<<|>>/;
+const LOGICAL_OP_DETECT_RX = /&&|\|\||!(?!=)/;
+const RELATIONAL_OP_DETECT_RX = /==|!=|<=|>=|(?<![<>])[<>](?![=<>])/;
+const SIGNED_CAST_DETECT_RX    =
+  /\(\s*(?:int(?:8|16|32)(?:_t)?|INT(?:8|16|32)|int(?:8|16|32)|char|short|int|long|signed)\s*\)/i;
+
+function normalizeHexLiterals(expr: string): string {
+  return expr.replace(/\b0[xX][0-9a-fA-F]+\b/g, m => Number(m).toString());
+}
+
+const SIZEOF_TYPE_SIZES: Record<string, number> = {
+  char: 1, short: 2, int: 4, long: 4,
+  float: 4, double: 8,
+  uint8_t: 1, uint16_t: 2, uint32_t: 4, uint64_t: 8,
+  int8_t: 1, int16_t: 2, int32_t: 4, int64_t: 8,
+  uint8: 1, uint16: 2, uint32: 4, uint64: 8,
+  int8: 1, int16: 2, int32: 4, int64: 8,
+  size_t: 4, ptrdiff_t: 4, intptr_t: 4, uintptr_t: 4,
+  _Bool: 1, bool: 1, void: 0,
+};
+
+// AFTER
+function preprocessSizeofAlignof(expr: string): string {
+  // [^()]* safely captures inner content without nested parens,
+  // which covers all C sizeof() operands we care about.
+  return expr.replace(
+    /\b(?:sizeof|_Alignof|__alignof__|_Alignas|__alignas__)\s*\(\s*([^()]*?)\s*\)/g,
+    (_match, inner: string) => {
+      const trimmed = inner.trim();
+
+      // Pointer type: void*, int*, const char* …  → pointer size (32-bit)
+      if (/^(?:(?:unsigned|signed|const|volatile)\s+)*[A-Za-z_]\w*\s*\*+\s*$/.test(trimmed)) {
+        return "4";
+      }
+
+      // Array type: TYPE[N]  →  sizeof(TYPE) * N
+      const arrayMatch = trimmed.match(
+        /^(?:(?:unsigned|signed)\s+)?([A-Za-z_]\w*)\s*\[(\d+)\]$/
+      );
+      if (arrayMatch) {
+        const elementSize = SIZEOF_TYPE_SIZES[arrayMatch[1].trim()] ?? 4;
+        return String(elementSize * parseInt(arrayMatch[2], 10));
+      }
+
+      // Plain type, optionally qualified: unsigned int, int8_t, char …
+      const plainMatch = trimmed.match(
+        /^(?:(?:unsigned|signed)\s+)?([A-Za-z_]\w*)$/
+      );
+      if (plainMatch) {
+        const typeName = plainMatch[1].trim();
+        if (typeName in SIZEOF_TYPE_SIZES) {
+          return String(SIZEOF_TYPE_SIZES[typeName]);
+        }
+      }
+
+      // Expression or unknown type (e.g. sizeof(5 + 3 * 2), sizeof(MyStruct))
+      // → return the default int size (4)
+      return "4";
+    }
+  );
+}
 
 export function detectExpressionNumericFormat(expr: string): NumericDisplayFormat {
-  if (HEX_LITERAL_DETECT_RX.test(expr) || BITWISE_LOGICAL_OP_DETECT_RX.test(expr)) {
+  if (HEX_LITERAL_DETECT_RX.test(expr) || BITWISE_OP_DETECT_RX.test(expr)) {
     return 'hex';
   }
   if (BINARY_LITERAL_DETECT_RX.test(expr)) {
     return 'binary';
+  }
+  if (LOGICAL_OP_DETECT_RX.test(expr) || RELATIONAL_OP_DETECT_RX.test(expr)) {
+    return 'boolean';
   }
   return 'decimal';
 }
@@ -140,6 +203,18 @@ function buildIntegerCast(
   };
 }
 
+function buildUnsignedIntegerCast(
+  castType: string,
+  bits: number
+): (value: unknown) => number {
+  const modulus = 2 ** bits;
+  return (value: unknown): number => {
+    const numeric = toFiniteNumber(value);
+    const truncated = Math.trunc(numeric);
+    return ((truncated % modulus) + modulus) % modulus;
+  };
+}
+
 function uintCastRange(bits: number): IntegerCastRange {
   return {
     min: 0,
@@ -174,21 +249,21 @@ export function getCastOverflowInfo(error: unknown): CastOverflowInfo | null {
 }
 
 const C_CAST_SCOPE: Record<string, EvalScopeValue> = {
-  UINT8: buildIntegerCast("UINT8", uintCastRange(8)),
-  UINT16: buildIntegerCast("UINT16", uintCastRange(16)),
-  UINT32: buildIntegerCast("UINT32", uintCastRange(32)),
+  UINT8:    buildUnsignedIntegerCast("UINT8",    8),
+  UINT16:   buildUnsignedIntegerCast("UINT16",   16),
+  UINT32:   buildUnsignedIntegerCast("UINT32",   32),
   INT8: buildIntegerCast("INT8", intCastRange(8)),
   INT16: buildIntegerCast("INT16", intCastRange(16)),
   INT32: buildIntegerCast("INT32", intCastRange(32)),
-  uint8_t: buildIntegerCast("uint8_t", uintCastRange(8)),
-  uint16_t: buildIntegerCast("uint16_t", uintCastRange(16)),
-  uint32_t: buildIntegerCast("uint32_t", uintCastRange(32)),
+  uint8_t:  buildUnsignedIntegerCast("uint8_t",  8),
+  uint16_t: buildUnsignedIntegerCast("uint16_t", 16),
+  uint32_t: buildUnsignedIntegerCast("uint32_t", 32),
   int8_t: buildIntegerCast("int8_t", intCastRange(8)),
   int16_t: buildIntegerCast("int16_t", intCastRange(16)),
   int32_t: buildIntegerCast("int32_t", intCastRange(32)),
-  uint8: buildIntegerCast("uint8", uintCastRange(8)),
-  uint16: buildIntegerCast("uint16", uintCastRange(16)),
-  uint32: buildIntegerCast("uint32", uintCastRange(32)),
+  uint8:    buildUnsignedIntegerCast("uint8",    8),
+  uint16:   buildUnsignedIntegerCast("uint16",   16),
+  uint32:   buildUnsignedIntegerCast("uint32",   32),
   int8: buildIntegerCast("int8", intCastRange(8)),
   int16: buildIntegerCast("int16", intCastRange(16)),
   int32: buildIntegerCast("int32", intCastRange(32)),
@@ -196,11 +271,14 @@ const C_CAST_SCOPE: Record<string, EvalScopeValue> = {
   int: buildIntegerCast("int", intCastRange(32)),
   short: buildIntegerCast("short", intCastRange(16)),
   long: buildIntegerCast("long", intCastRange(32)),
-  unsigned: buildIntegerCast("unsigned", uintCastRange(32)),
+  unsigned: buildUnsignedIntegerCast("unsigned", 32),
   signed: buildIntegerCast("signed", intCastRange(32)),
   float: (value: unknown) => toFiniteNumber(value),
   double: (value: unknown) => toFiniteNumber(value),
   bool: (value: unknown) => (toFiniteNumber(value) === 0 ? 0 : 1),
+  _Bool: (value: unknown) => (toFiniteNumber(value) === 0 ? 0 : 1),
+  // _Complex: restituisce la parte reale (semplificazione per firmware C99)
+  _Complex: (value: unknown) => toFiniteNumber(value),
   // Unsigned 32-bit bitwise NOT helper used by expression pre-processing.
   bnot: (value: unknown) => (~Math.trunc(toFiniteNumber(value))) >>> 0,
 };
@@ -1110,6 +1188,10 @@ function isReducibleNumericFragment(fragment: string): boolean {
 }
 
 function simplifyNumericFragments(expr: string, context: EvaluationContext): string {
+  if (/[&|^~]|<<|>>/.test(expr)) {
+    return expr;
+  }
+
   let output = expr;
 
   for (let pass = 0; pass < SIMPLIFY_MAX_PASSES; pass += 1) {
@@ -1373,9 +1455,10 @@ export function removeRedundantParens(expr: string): string {
     // Il negative lookahead (?!\s*[A-Za-z0-9_(]) evita di strippare cast C
     // come (uint16_t) quando sono immediatamente seguiti da un operando.
     const nextAfterStep1 = current.replace(
-      /(?<![A-Za-z0-9_])\(([A-Za-z_]\w*|\d+(?:\.\d+)?)\)(?!\s*[A-Za-z0-9_(])/g,
+      /(?<![A-Za-z0-9_.$])\(([A-Za-z_]\w*|\d+(?:\.\d+)?)\)(?!\s*[A-Za-z0-9_(~\-])/g,
       "$1"
     );
+
     if (nextAfterStep1 !== current) {
       current = nextAfterStep1;
       changed = true;
@@ -1634,7 +1717,7 @@ type LiteralSanitizationResult = {
 const C_NUMERIC_LITERAL_WITH_SUFFIX_RX =
   /(?<![A-Za-z0-9_.$])((?:0[xX][0-9A-Fa-f]+|0[bB][01]+|0[oO][0-7]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?))(u(?:ll|l)?|(?:ll|l)u|ll|l|f)\b/gi;
 const SIGNED_RIGHT_SHIFT_RX = />>(?!>)/g;
-const BITWISE_OPERATOR_RX = /(~|&|\||\^|<<|>>>?)/;
+const BITWISE_OPERATOR_RX = /(?<![&])&(?!&)|(?<![|])\|(?!\|)|\^|~|<<|>>>?/;
 const UNARY_BITWISE_NOT_PAREN_RX = /~\s*\(/g;
 const UNARY_BITWISE_NOT_TOKEN_RX =
   /~\s*(0[xX][0-9A-Fa-f]+|0[bB][01]+|0[oO][0-7]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[A-Za-z_]\w*)/g;
@@ -1676,35 +1759,69 @@ function sanitizeCLiteralsForEval(expr: string): LiteralSanitizationResult {
 
 function preprocessUnsignedBitwiseOps(
   expr: string,
-  hasUnsignedIntegerLiteral: boolean
+  hasUnsignedIntegerLiteral: boolean,
+  hasHexLiteral: boolean = false 
 ): string {
-  if (!hasUnsignedIntegerLiteral) {
+  if (!hasUnsignedIntegerLiteral && !hasHexLiteral) {  // ← aggiornata guardia
     return expr;
   }
 
-  let output = expr.replace(UNARY_BITWISE_NOT_PAREN_RX, "bnot(");
-  output = output.replace(
-    UNARY_BITWISE_NOT_TOKEN_RX,
-    (_: string, operand: string) => `bnot(${operand})`
-  );
+  if (!expr.includes(">>")) {
+    return expr;
+  }
 
+  let output = expr;
+
+  // bnot solo per letterali con suffisso U esplicito (0xFu, 1u, ecc.)
+  // Per hex puri (0xFF senza U), ci si affida a >>> 0 in safeEval
+  if (hasUnsignedIntegerLiteral) {
+    output = output.replace(UNARY_BITWISE_NOT_PAREN_RX, "bnot(");
+    output = output.replace(
+      UNARY_BITWISE_NOT_TOKEN_RX,
+      (_: string, operand: string) => `bnot(${operand})`
+    );
+  }
+
+  // >> → >>> vale per entrambi i contesti
   return output.replace(SIGNED_RIGHT_SHIFT_RX, ">>>");
 }
 
+// const C_QUALIFIER_PATTERN =
+//   "volatile|const|restrict|__restrict__|__restrict|__volatile__|__volatile|__const__|__const|__extension__";
+// const C_TYPE_PATTERN =
+//   "(?:u?int|UINT|INT)(?:8|16|32)(?:_t)?|float|double|bool|char|short|long|unsigned|signed|int";
+// // const C_TYPE_PATTERN =
+// //   /\(\s*(u?int(?:8|16|32)(?:_t)?|UINT(?:8|16|32)|INT(?:8|16|32)|uint(?:8|16|32)|int(?:8|16|32)|float|double|bool|char|short|long|unsigned|signed|int)\s*\)\s*(?!\()([-+~]?(?:0[xX][\dA-Fa-f]+|0[bB][01]+|0[oO][0-7]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[A-Za-z_]\w*)(?!\s*\())/gi
+// //   // "u?int(?:8|16|32)(?:_t)?|UINT(?:8|16|32)|INT(?:8|16|32)|uint(?:8|16|32)|int(?:8|16|32)|float|double|bool|char|short|long|unsigned|signed|int";
+// const C_CAST_WITH_QUALIFIER_RX = new RegExp(
+//   `\\(\\s*(?:(?:${C_QUALIFIER_PATTERN})\\s+)+(${C_TYPE_PATTERN})\\s*\\)`,
+//   "gi"
+// );
+// const C_CAST_UNPAREN_RX = new RegExp(
+//   `\\(\\s*(${C_TYPE_PATTERN})\\s*\\)` +
+//     `\\s*(?!\\()` +
+//     `([-+~]?(?:0[xX][\\dA-Fa-f]+|0[bB][01]+|0[oO][0-7]+|(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?|[A-Za-z_]\\w*)(?!\\s*\\()))`,
+//   "gi"
+// );
+
 const C_QUALIFIER_PATTERN =
   "volatile|const|restrict|__restrict__|__restrict|__volatile__|__volatile|__const__|__const|__extension__";
+
 const C_TYPE_PATTERN =
-  "u?int(?:8|16|32)(?:_t)?|UINT(?:8|16|32)|INT(?:8|16|32)|uint(?:8|16|32)|int(?:8|16|32)|float|double|bool|char|short|long|unsigned|signed|int";
+  "(?:u?int|UINT|INT)(?:8|16|32)(?:_t)?|float|double|bool|char|short|long|unsigned|signed|int";
+
 const C_CAST_WITH_QUALIFIER_RX = new RegExp(
   `\\(\\s*(?:(?:${C_QUALIFIER_PATTERN})\\s+)+(${C_TYPE_PATTERN})\\s*\\)`,
   "gi"
 );
+
 const C_CAST_UNPAREN_RX = new RegExp(
   `\\(\\s*(${C_TYPE_PATTERN})\\s*\\)` +
     `\\s*(?!\\()` +
-    `([-+]?(?:0[xX][\\dA-Fa-f]+|0[bB][01]+|0[oO][0-7]+|\\d+(?:\\.\\d*)?(?:[eE][+-]?\\d+)?|\\.[0-9]+(?:[eE][+-]?\\d+)?|[A-Za-z_]\\w*)(?!\\s*\\())`,
+    `([-+~]?(?:0[xX][\\dA-Fa-f]+|0[bB][01]+|0[oO][0-7]+|(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?|[A-Za-z_]\\w*)(?!\\s*\\())`,
   "gi"
 );
+
 
 function normalizePrimitiveCastSpelling(expr: string): string {
   return expr
@@ -1743,9 +1860,11 @@ function preprocessCCastsForEval(expr: string): string {
 export function safeEval(expr: string, context: EvaluationContext = {}): number {
   const casted = preprocessCCastsForEval(expr);
   const literalSanitized = sanitizeCLiteralsForEval(casted);
+  const hasHexLiteral = HEX_LITERAL_DETECT_RX.test(expr);
   const cleaned = preprocessUnsignedBitwiseOps(
     literalSanitized.expression,
-    literalSanitized.hasUnsignedIntegerLiteral
+    literalSanitized.hasUnsignedIntegerLiteral,
+    hasHexLiteral
   );
 
   const scope = createEvaluationScope(context);
@@ -1753,21 +1872,31 @@ export function safeEval(expr: string, context: EvaluationContext = {}): number 
   const scopeValues = scopeKeys.map((key) => scope[key]);
 
   // Add eval support for C ==/!= in conditions
-  const conditionExpr = cleaned.replace(/==/g, '===').replace(/!=/g, '!==');
+  // const conditionExpr = cleaned/*.replace(/==/g, '===').replace(/!=/g, '!==')*/;
+  let conditionExpr = cleaned;
+  conditionExpr = normalizeHexLiterals(conditionExpr);
+  conditionExpr = preprocessSizeofAlignof(conditionExpr);
+
   const fn = new Function(...scopeKeys, `"use strict"; return (${conditionExpr});`);
   let value = fn(...scopeValues);
 
-  // convert JS boolean -> C numeric
-  if (typeof value === "boolean") {
-    value = value ? 1 : 0;
+  const IS_BITWISE_EXPR = BITWISE_OPERATOR_RX.test(expr);
+
+  if (IS_BITWISE_EXPR) {
+    value = Number(value) >>> 0;
   }
 
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error("non-numeric");
+  const IS_BOOLEAN_EXPR =
+    LOGICAL_OP_DETECT_RX.test(expr) ||
+    RELATIONAL_OP_DETECT_RX.test(expr);
+
+  if (typeof value === "boolean") {
+    value = value ? 1 : 0;
+  } else if (IS_BOOLEAN_EXPR) {
+    value = toFiniteNumber(value) !== 0 ? 1 : 0;
   }
 
   if (
-    literalSanitized.hasUnsignedIntegerLiteral &&
     Number.isInteger(value) &&
     BITWISE_OPERATOR_RX.test(cleaned)
   ) {
@@ -2244,7 +2373,8 @@ const CONTROL_FLOW_RX = /\b(if|while|for|switch|return|do|goto|case|break|contin
 export function isCompositeExpression(
   expr: string,
   symbolValues: Map<string, number>,
-  allDefines: Map<string, string>
+  allDefines: Map<string, string>,
+  functionDefines?: Map<string, FunctionMacroDefinition>
 ): boolean {
   const sanitized = stripComments(expr).trim();
   if (!sanitized) {
@@ -2264,8 +2394,43 @@ export function isCompositeExpression(
     return true;
   }
 
+  // FIX: espressioni puramente bitwise su letterali hex/numerici
+  // (es. 0xFF & 0x0F, ~0x0F) non hanno token in symbolValues/allDefines,
+  // e OP_RX potrebbe non coprire &, |, ^, ~, <<, >>.
+  if (BITWISE_OP_DETECT_RX.test(sanitized)) {
+    return true;
+  }
+
+  if (RELATIONAL_OP_DETECT_RX.test(sanitized)) {
+    return true;
+  }
+
+  // Ternary operator (?:)
+  if (sanitized.includes("?")) {
+    return true;
+  }
+
+  // C-style cast operator: (type)value
+  if (
+    /\(\s*(?:u?int(?:8|16|32|64)(?:_t)?|float|double|char|short|long|unsigned|signed|bool|_Bool)\s*\)/.test(
+      sanitized
+    )
+  ) {
+    return true;
+  }
+
+  // sizeof / _Alignof
+  if (/\bsizeof\b|\b_Alignof\b|\b__alignof__\b/.test(sanitized)) {
+    return true;
+  }
+
   const tokens = sanitized.match(TOKEN_RX) ?? [];
-  return tokens.some((token) => symbolValues.has(token) || allDefines.has(token));
+  return tokens.some(
+    (token) =>
+      symbolValues.has(token) ||
+      allDefines.has(token) ||
+      (functionDefines?.has(token) ?? false)
+  );
 }
 
 function pickCompositePreviewError(
@@ -2367,7 +2532,11 @@ export function buildCompositeExpressionPreview(
   symbolUnits: Map<string, string> = new Map<string, string>()
 ): CompositeExpressionPreview {
   let expanded = stripComments(expr);
+  // ✅ NORMALIZZAZIONE HEX PRIMA DI QUALSIASI SOSTITUZIONE DI IDENTIFICATORI
+  // Risolve bug dove 0xFF veniva spezzato in '0' + 'xFF' dal tokenizzatore
+  // ✅ IMPORTANTE: manteniamo espressione originale per rilevamento formato numerico
   const numericFormat = detectExpressionNumericFormat(expanded);
+  expanded = normalizeHexLiterals(expanded);
   if (CONTROL_FLOW_RX.test(expanded)) {
     return {
       expanded: expr,
@@ -2455,6 +2624,10 @@ export function buildCompositeExpressionPreview(
   // console.log("TOKENS found after simplification:", tokens);
 
   for (const token of tokens) {
+    if (/^(?:0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|\d+)$/.test(token)) {
+      continue;
+    }
+
     // Already in symbolValues? Skip it
     if (symbolValues.has(token)) {
       // console.log(`  Token "${token}" already in symbolValues: ${symbolValues.get(token)}`);
@@ -2489,6 +2662,7 @@ export function buildCompositeExpressionPreview(
 
   try {
     const value = safeEval(evaluableExpanded, context);
+    console.log(`EVAL INPUT: ${evaluableExpanded} --- VALUE: ${value}`);
     // console.log("EVAL SUCCESS on evaluableExpanded:", value);
     return {
       expanded: unwrapParens(simplifiedExpanded),

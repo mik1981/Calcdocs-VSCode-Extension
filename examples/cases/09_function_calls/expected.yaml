@@ -1,0 +1,2 @@
+# Function calls show as ghost HAL_delay(28)
+HAL_delay: { expanded: HAL_delay(28) }

@@ -115,6 +115,7 @@ export type CalcDocsConfig = {
   /** Path for generated C header with formula macros */
   formulaHeader: {
     outputPath: string;
+    includeResolvedValues: boolean;
   };
   /** Configurazione CodeLens C/C++ */
   cppCodeLens: CppCodeLensConfig;
@@ -300,6 +301,7 @@ export function getConfig(): CalcDocsConfig {
 
   const formulaHeader = {
     outputPath: cfg.get<string>("formulaHeader.outputPath", "macro_generate.h"),
+    includeResolvedValues: cfg.get<boolean>("formulaHeader.includeResolvedValues", true)
   };
 
   const cppCodeLensEnabled = cfg.get<boolean>("cpp.codeLens.enabled", true);

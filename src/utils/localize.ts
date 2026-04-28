@@ -77,7 +77,15 @@ const fallbackEn: Record<string, string> = {
   "output.noYamlUpdates": "No YAML updates needed: {0}",
   "output.yamlUpdated": "Updated YAML: {0}",
 
-  "channel.name": "CalcDocs"
+  "channel.name": "CalcDocs",
+  "command.openTestFolder.title": "CalcDocs: Open Test Folder",
+  "command.inlineCalc.openGuide.title": "Inline Calc Guide",
+  "command.formulas.foldAll": "Fold All Formulas",
+  "command.generateFormulaHeader.title": "Generate Formulas Header",
+  "view.inlineCalcResults.name": "CalcDocs Inline Results",
+  "config.formulaHeader.outputPath": "Path for generated C header with formula macros",
+  "config.formulaHeader.includeResolvedValues": "Add resolved numeric value as comment next to each generated #define.",
+  "command.generateCompileCommands.title": "Generate compile_commands.json for clangd"
 };
 
 /**

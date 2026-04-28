@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.5] - 04/28/2026
+
+- Removed unused parameters and commands
+- Extended calcdocs.generateFormulaHeader to all formula*.yaml files in the workspace
+- Fixed license badge in README.md
+- Added example case 10_c_operators
+
+- Support to c operator like sizeof, _Alignas, _Alignof, _Static_assert, _Bool, _Complex, _Imaginary e #undef
+
 ## [0.2.4] - 04/23/2026
 
 - Auto-detect hex or binary view format

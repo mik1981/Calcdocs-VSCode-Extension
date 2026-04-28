@@ -70,5 +70,9 @@
   "command.openTestFolder.title": "CalcDocs: Apri cartella di test dell'estensione",
   "command.inlineCalc.openGuide.title": "CalcDocs: Apri guida inline",
   "command.formulas.foldAll": "CalcDocs: Piega tutte le formule",
+  "config.formulaHeader.outputPath": "CalcDocs: Percorso per header C generato con macro formule",
+  "config.formulaHeader.includeResolvedValues": "CalcDocs: Aggiungi valore numerico risolto come commento accanto a ogni #define generato.",
+  "command.generateFormulaHeader.title": "CalcDocs: Genera Header Formule",
+  "view.inlineCalcResults.name": "CalcDocs: Risultati Inline CalcDocs",
   "command.generateCompileCommands.title": "CalcDocs: Genera compile_commands.json per clangd"
 }

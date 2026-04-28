@@ -92,7 +92,11 @@ export function formatPreviewNumberWithFormat(
   value: number,
   format?: NumericDisplayFormat
 ): string {
-  return formatValueForDisplay(state, value, format);
+  if (format === 'boolean') {
+    return value !== 0 ? 'true' : 'false';
+  }
+  return formatValueForDisplay(state, value,
+    format /*as 'decimal' | 'hex' | 'binary' | undefined*/);
 }
 
 /**

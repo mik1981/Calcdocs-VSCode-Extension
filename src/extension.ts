@@ -501,10 +501,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         event.affectsConfiguration("calcdocs.scanInterval") ||
         event.affectsConfiguration("calcdocs.ignoredDirs") ||
         event.affectsConfiguration("calcdocs.enableCppProviders") ||
-        event.affectsConfiguration("calcdocs.cppCacheMaxEntries") ||
-        event.affectsConfiguration("calcdocs.cppDefines") ||
-        event.affectsConfiguration("calcdocs.cppUndefines") ||
-        event.affectsConfiguration("calcdocs.cppConfiguration");
+        event.affectsConfiguration("calcdocs.cppCacheMaxEntries");
 
       if (analysisRelevantChange) {
         void runAnalysisAndRefreshUi();

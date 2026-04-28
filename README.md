@@ -1,8 +1,8 @@
-# 🧮 CalcDocs — Instantly See What Your Firmware REALLY Computes **[0.2.4-prerelease]**
+# 🧮 CalcDocs — Instantly See What Your Firmware REALLY Computes **[0.2.5-prerelease]**
 
 [![Version](https://vsmarketplacebadges.dev/version-short/convergo-dev.calcdocs-vscode-extension.svg)](https://visualstudio.com)
 [![Download](https://vsmarketplacebadges.dev/downloads-short/convergo-dev.calcdocs-vscode-extension.svg)](https://visualstudio.com)
-[![License](https://img.shields.io/github/license/mik1981/Calcdocs-VSCode-Extension)](./LICENSE.md)
+[![License](./resources/license-badge.png)](./LICENSE.md)
 
 Stop expanding macros.
 Stop guessing values.

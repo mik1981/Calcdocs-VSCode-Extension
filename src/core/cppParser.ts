@@ -938,6 +938,17 @@ export async function collectDefinesAndConsts(
         continue;
       }
 
+      // ---- handle #undef (rimuove il define dall'accumulatore globale) ----
+      const undefFirstPass = directive.match(UNDEF_RX);
+      if (undefFirstPass) {
+        const undefinedName = undefFirstPass[1];
+        defines.delete(undefinedName);
+        consts.delete(undefinedName);
+        locations.delete(undefinedName);
+        globallyDefinedSymbols.delete(undefinedName);
+        continue;
+      }
+
       // ---- parse defines ----
       const defineName = parseDefineNameDirective(line);
       if (defineName) {
@@ -1177,7 +1188,10 @@ export async function collectDefinesAndConsts(
             } else {
               const undefMatch = directiveLine.match(UNDEF_RX);
               if (undefMatch) {
-                activeDefinedSymbols.delete(undefMatch[1]);
+                const undefName = undefMatch[1];
+                activeDefinedSymbols.delete(undefName);
+                defines.delete(undefName);
+                consts.delete(undefName);
                 isDirectiveLine = true;
               }
             }

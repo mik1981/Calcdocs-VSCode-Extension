@@ -51,13 +51,8 @@ export function registerCommands({
     }),
 
     vscode.commands.registerCommand("calcdocs.generateFormulaHeader", async () => {
-      const formulas = await formulaRegistry.getAllFormulas();
-      if (formulas.length === 0) {
-        vscode.window.showWarningMessage("No formulas*.yaml found or parsed.");
-        return;
-      }
-      const outputPath = (getConfig() as any).formulaHeader?.outputPath || 'macro_generate.h';
-      await generateFormulaHeader(formulas, outputPath, state);
+      const outputPath = getConfig().formulaHeader.outputPath || 'macro_generate.h';
+      await generateFormulaHeader([], outputPath, state);
     }),
 
     vscode.commands.registerCommand("calcdocs.showOutput", async () => {
@@ -366,13 +361,8 @@ export function registerCommands({
         await vscode.window.showInformationMessage(localize("command.restart.done"));
         return;
       case "generateFormulaHeader":
-        const formulas = await formulaRegistry.getAllFormulas();
-        if (formulas.length === 0) {
-          vscode.window.showWarningMessage("No formulas*.yaml found or parsed.");
-          return;
-        }
-        const outputPath = getConfig().formulaHeader?.outputPath || 'macro_generate.h';
-        await generateFormulaHeader(formulas.flat(), outputPath, state);
+        const outputPath = getConfig().formulaHeader.outputPath || 'macro_generate.h';
+        await generateFormulaHeader([], outputPath, state);
         return;
       case "toggleEnabled":
         await toggleWorkspaceBoolean("enabled", config.enabled);

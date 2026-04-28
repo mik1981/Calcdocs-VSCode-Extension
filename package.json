@@ -2,7 +2,7 @@
   "name": "calcdocs-vscode-extension",
   "displayName": "CalcDocs - C/C++ Constants & Formula Evaluator",
   "description": "%extension.description%",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "convergo-dev",
   "repository": {
     "type": "git",
@@ -114,27 +114,6 @@
           "type": "boolean",
           "default": true,
           "description": "%config.useClangd%"
-        },
-        "calcdocs.cppDefines": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "description": "%config.cppDefines%"
-        },
-        "calcdocs.cppUndefines": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "description": "%config.cppUndefines%"
-        },
-        "calcdocs.cppConfiguration": {
-          "type": "string",
-          "default": "",
-          "description": "%config.cppConfiguration%"
         },
         "calcdocs.resourceStatusMode": {
           "type": "string",
@@ -351,56 +330,22 @@
           ],
           "description": "%config.inline.diagnostics.level%"
         },
-        "calcdocs.inlineCalc.enableCodeLens": {
-          "type": "boolean",
-          "default": true,
-          "description": "%config.inlineCalc.enableCodeLens%"
-        },
-        "calcdocs.inlineCalc.enableHover": {
-          "type": "boolean",
-          "default": true,
-          "description": "%config.inlineCalc.enableHover%"
-        },
-        "calcdocs.inlineCalc.diagnosticsLevel": {
-          "type": "string",
-          "default": "warnings",
-          "enum": [
-            "off",
-            "errors",
-            "warnings",
-            "info"
-          ],
-          "enumDescriptions": [
-            "%config.inlineCalc.diagnosticsLevel.off%",
-            "%config.inlineCalc.diagnosticsLevel.errors%",
-            "%config.inlineCalc.diagnosticsLevel.warnings%",
-            "%config.inlineCalc.diagnosticsLevel.info%"
-          ],
-          "description": "%config.inlineCalc.diagnosticsLevel%"
-        },
-        "calcdocs.hover.enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "calcdocs.hover.minConfidence": {
-          "type": "number",
-          "default": 0.6
-        },
-        "calcdocs.hover.showSource": {
-          "type": "boolean",
-          "default": true
-        },
         "calcdocs.formulaHeader.outputPath": {
           "type": "string",
           "default": "macro_generate.h",
-          "description": "Path for generated C header with formula macros"
+          "description": "%config.formulaHeader.outputPath%"
+        },
+        "calcdocs.formulaHeader.includeResolvedValues": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.formulaHeader.includeResolvedValues%"
         }
       }
     },
     "commands": [
       {
         "command": "calcdocs.generateFormulaHeader",
-        "title": "Generate Formulas Header",
+        "title": "%command.generateFormulaHeader.title%",
         "icon": "$(file-code)"
       },
       {
@@ -467,7 +412,7 @@
       "explorer": [
         {
           "id": "calcdocs.inlineCalcResults",
-          "name": "CalcDocs Inline Results",
+          "name": "%view.inlineCalcResults.name%",
           "icon": "$(path)",
           "when": "workspaceFolderCount > 0"
         }
@@ -529,6 +474,7 @@
   },
   "icon": "resources/icon.png",
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.19.39",
     "@types/vscode": "^1.109.0",
