@@ -1738,8 +1738,15 @@ function sanitizeCLiteralsForEval(expr: string): LiteralSanitizationResult {
   let hasUnsignedIntegerLiteral = false;
   const expression = expr.replace(
     C_NUMERIC_LITERAL_WITH_SUFFIX_RX,
-    (_, literal: string, suffix: string) => {
+    (full: string, literal: string, suffix: string) => {
       const normalizedSuffix = suffix.toLowerCase();
+      if (
+        /^0[xX]/.test(literal) &&
+        normalizedSuffix === "f"
+      ) {
+        return full;
+      }
+
       if (
         normalizedSuffix.includes("u") &&
         !literalIsFloatingPoint(literal, normalizedSuffix)
@@ -1880,12 +1887,6 @@ export function safeEval(expr: string, context: EvaluationContext = {}): number 
   const fn = new Function(...scopeKeys, `"use strict"; return (${conditionExpr});`);
   let value = fn(...scopeValues);
 
-  const IS_BITWISE_EXPR = BITWISE_OPERATOR_RX.test(expr);
-
-  if (IS_BITWISE_EXPR) {
-    value = Number(value) >>> 0;
-  }
-
   const IS_BOOLEAN_EXPR =
     LOGICAL_OP_DETECT_RX.test(expr) ||
     RELATIONAL_OP_DETECT_RX.test(expr);
@@ -1894,13 +1895,6 @@ export function safeEval(expr: string, context: EvaluationContext = {}): number 
     value = value ? 1 : 0;
   } else if (IS_BOOLEAN_EXPR) {
     value = toFiniteNumber(value) !== 0 ? 1 : 0;
-  }
-
-  if (
-    Number.isInteger(value) &&
-    BITWISE_OPERATOR_RX.test(cleaned)
-  ) {
-    return value >>> 0;
   }
 
   return value;

@@ -39,30 +39,36 @@ async function createClangdBackend(
   output?: ColoredOutput,
   useClangd = true
 ): Promise<IClangdBackend> {
-  if (!useClangd) {
-    output?.info("[clangd] disabled by configuration");
+  try {
+    if (!useClangd) {
+      output?.info("[clangd] disabled by configuration");
+      return createFallbackBackend();
+    }
+
+    if (await hasVsCodeClangd()) {
+      output?.info("[clangd] using vscode-clangd backend");
+      const backend = new VsCodeClangdBackend();
+      await backend.initialize();
+      return backend;
+    }
+
+    output?.info("[clangd] vscode-clangd not found");
+
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+    const client = new ClangdClient(workspaceRoot, output);
+    const status = await client.initialize(context, true);
+    if (status.available) {
+      output?.info("[clangd] using external clangd backend");
+      return client;
+    }
+
+    output?.warn("[clangd] clangd unavailable, fallback mode");
+    return createFallbackBackend();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    output?.warn(`[clangd] initialization failed: ${message}`);
     return createFallbackBackend();
   }
-
-  if (await hasVsCodeClangd()) {
-    output?.info("[clangd] using vscode-clangd backend");
-    const backend = new VsCodeClangdBackend();
-    await backend.initialize();
-    return backend;
-  }
-
-  output?.info("[clangd] vscode-clangd not found");
-
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
-  const client = new ClangdClient(workspaceRoot, output);
-  const status = await client.initialize(context, true);
-  if (status.available) {
-    output?.info("[clangd] using external clangd backend");
-    return client;
-  }
-
-  output?.warn("[clangd] clangd unavailable, fallback mode");
-  return createFallbackBackend();
 }
 
 export async function createClangdService(

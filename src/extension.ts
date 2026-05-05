@@ -77,6 +77,19 @@ function applyConfigToState(state: ReturnType<typeof createCalcDocsState>, confi
   state.inlineHover = { ...config.inlineHover };
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+  return String(error);
+}
+
+function handleActivationError(error: unknown): void {
+  const message = getErrorMessage(error);
+  coloredOutput?.error(`[activate] errore inatteso: ${message}`);
+  vscode.window.showErrorMessage(`CalcDocs: errore di attivazione. ${message}`);
+}
+
 /**
  * Canale di output dell'estensione per messaggi di log e diagnostica.
  * Utilizzato per scrivere messaggi nella panel "CalcDocs" di VSCode.
@@ -150,8 +163,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Crea gli elementi della status bar
   runtimeStatusBar = createRuntimeStatusBar(context);
 
-  clangdService = await createClangdService(context, state.output, config.useClangd);
-  const clangdSymbolProvider = new ClangdSymbolProvider(clangdService);
+  try {
+    try {
+      clangdService = await createClangdService(context, state.output, config.useClangd);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      state.output.warn(`[clangd] service initialization failed: ${message}`);
+      // In caso di errore grave, il factory dovrebbe già aver fornito un fallback.
+      clangdService = await createClangdService(context, state.output, false);
+    }
+
+    const clangdSymbolProvider = new ClangdSymbolProvider(clangdService);
   const legacySymbolProvider = new LegacyParserProvider(state);
   const hybridSymbolProvider = new HybridSymbolProvider(
     clangdService,
@@ -262,59 +284,69 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * che dipendono dallo stato corrente.
    */
   const runAnalysisAndRefreshUi = async (): Promise<void> => {
-    // Se l'estensione è disabilitata, pulisci lo stato e ferma i provider
-    if (!state.enabled) {
-      clearComputedState(state);
-      clearDiagnostics(state);
-      clearInlineCalcDiagnostics(state);
+    try {
+      // Se l'estensione è disabilitata, pulisci lo stato e ferma i provider
+      if (!state.enabled) {
+        clearComputedState(state);
+        clearDiagnostics(state);
+        clearInlineCalcDiagnostics(state);
+        refreshRuntimeStatus();
+        codeLensProvider.refresh();
+        inlineCalcCodeLensProvider.refresh();
+        inlineCalcResultsViewProvider.refresh();
+        diagnosticsProvider.mergeForVisibleEditors();
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor) {
+          ghostProvider.update(activeEditor);
+        }
+        return;
+      }
+
+      // Esegui l'analisi del workspace
+      await runAnalysis(state);
+
+      const activeEditor = vscode.window.activeTextEditor;
+      if (isCppFileEditor(activeEditor)) {
+        await runActiveCppFileAnalysis(state, activeEditor.document.uri.fsPath);
+      }
+
+      // Aggiorna tutti i componenti UI
       refreshRuntimeStatus();
       codeLensProvider.refresh();
       inlineCalcCodeLensProvider.refresh();
       inlineCalcResultsViewProvider.refresh();
+      refreshInlineCalcDiagnosticsForVisibleEditors(state);
       diagnosticsProvider.mergeForVisibleEditors();
-      const activeEditor = vscode.window.activeTextEditor;
       if (activeEditor) {
         ghostProvider.update(activeEditor);
+        formulaOutlineProvider.refreshDecorations();
       }
-      return;
-    }
-
-    // Esegui l'analisi del workspace
-    await runAnalysis(state);
-
-    const activeEditor = vscode.window.activeTextEditor;
-    if (isCppFileEditor(activeEditor)) {
-      await runActiveCppFileAnalysis(state, activeEditor.document.uri.fsPath);
-    }
-
-    // Aggiorna tutti i componenti UI
-    refreshRuntimeStatus();
-    codeLensProvider.refresh();
-    inlineCalcCodeLensProvider.refresh();
-    inlineCalcResultsViewProvider.refresh();
-    refreshInlineCalcDiagnosticsForVisibleEditors(state);
-    diagnosticsProvider.mergeForVisibleEditors();
-    if (activeEditor) {
-      ghostProvider.update(activeEditor);
-      formulaOutlineProvider.refreshDecorations();
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      state.output.warn(`[runAnalysisAndRefreshUi] errore inatteso: ${message}`);
     }
   };
 
   const runActiveCppAnalysisAndRefreshUi = async (
     editor: vscode.TextEditor | undefined
   ): Promise<void> => {
-    if (!state.enabled || !isCppFileEditor(editor)) {
-      return;
-    }
+    try {
+      if (!state.enabled || !isCppFileEditor(editor)) {
+        return;
+      }
 
-    await runActiveCppFileAnalysis(state, editor.document.uri.fsPath);
-    refreshRuntimeStatus();
-    codeLensProvider.refresh();
-    inlineCalcCodeLensProvider.refresh();
-    inlineCalcResultsViewProvider.refresh();
-    refreshInlineCalcDiagnosticsForVisibleEditors(state);
-    diagnosticsProvider.mergeForVisibleEditors();
-    ghostProvider.update(editor);
+      await runActiveCppFileAnalysis(state, editor.document.uri.fsPath);
+      refreshRuntimeStatus();
+      codeLensProvider.refresh();
+      inlineCalcCodeLensProvider.refresh();
+      inlineCalcResultsViewProvider.refresh();
+      refreshInlineCalcDiagnosticsForVisibleEditors(state);
+      diagnosticsProvider.mergeForVisibleEditors();
+      ghostProvider.update(editor);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      state.output.warn(`[runActiveCppAnalysisAndRefreshUi] errore inatteso: ${message}`);
+    }
   };
 
 
@@ -342,14 +374,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (workspaceRoot) {
         state.workspaceRoot = workspaceRoot;
         disposable.dispose();
-        runAnalysisAndRefreshUi();
+        void runAnalysisAndRefreshUi();
       }
     });
     context.subscriptions.push(disposable);
   }
-
-// Registra i provider per hover, definition e CodeLens
-  vscode.languages.registerFoldingRangeProvider('yaml', formulaOutlineProvider);
 
   registerDefinitionProviders(context, state, config.enableCppProviders);
   registerCppHoverProvider(context, state, config.enableCppProviders);
@@ -462,10 +491,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           context,
           state.output,
           nextConfig.useClangd
-        ).then(() => {
-          refreshRuntimeStatus();
-          void runAnalysisAndRefreshUi();
-        });
+        )
+          .then(() => {
+            refreshRuntimeStatus();
+            void runAnalysisAndRefreshUi();
+          })
+          .catch((error: unknown) => {
+            const message = getErrorMessage(error);
+            state.output.warn(`[clangd] reconfigure failed: ${message}`);
+            refreshRuntimeStatus();
+          });
       }
 
       // Log del cambiamento di stato enabled
@@ -508,6 +543,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     })
   );
+  } catch (error: unknown) {
+    handleActivationError(error);
+  }
 }
 
 /**

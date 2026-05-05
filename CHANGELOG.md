@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.6] - 05/05/2026
+
+- Add preview support for the switch/case keyword
+- Improve accuracy of multiple definition warnings
+- Improve conditional stack handling (#if/#elif/#else/endif) in cppParser
+- Parser accuracy for advanced C types and preprocessor conditions
+- Support for C operators (sizeof, _Alignas, _Alignof, _Static_assert, _Bool, _Complex, _Imaginary, #undef)
+- Enum member extraction and auto-increment handling
+- Auto-detect hex or binary view formats
+
 ## [0.2.5] - 04/28/2026
 
 - Removed unused parameters and commands

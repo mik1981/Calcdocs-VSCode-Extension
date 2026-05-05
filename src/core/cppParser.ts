@@ -43,6 +43,9 @@ type ParsedDefineDirective = {
 type ParsedValueDeclaration = {
   name: string;
   expr: string;
+  isConst?: boolean;
+  isStatic?: boolean;
+  isDefinition?: boolean;
 };
 
 type ConditionalFrame = {
@@ -685,23 +688,29 @@ function findAssignmentOperatorIndex(line: string): number {
   return -1;
 }
 
-function parseValueDeclaration(line: string): ParsedValueDeclaration | undefined {
+function parseValueDeclaration(
+  line: string
+): ParsedValueDeclaration | undefined {
   const cleaned = stripComments(line).trim();
+
   if (!cleaned || cleaned.startsWith("#")) {
     return undefined;
   }
 
   const semicolonIndex = cleaned.lastIndexOf(";");
+
   if (semicolonIndex < 0) {
     return undefined;
   }
 
   const declaration = cleaned.slice(0, semicolonIndex).trim();
+
   if (!declaration) {
     return undefined;
   }
 
   const assignmentIndex = findAssignmentOperatorIndex(declaration);
+
   if (assignmentIndex <= 0) {
     return undefined;
   }
@@ -713,18 +722,24 @@ function parseValueDeclaration(line: string): ParsedValueDeclaration | undefined
     return undefined;
   }
 
+  // Reject function calls / arrays / scopes
   if (
     leftSide.includes("(") ||
     leftSide.includes(")") ||
     leftSide.includes("[") ||
     leftSide.includes("]") ||
     leftSide.includes("{") ||
-    leftSide.includes("}")
+    leftSide.includes("}") ||
+    leftSide.includes(".") ||
+    leftSide.includes("->")
   ) {
     return undefined;
   }
 
-  const leftTokens = leftSide.split(/\s+/).filter((token) => token.length > 0);
+  const leftTokens = leftSide
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+
   if (leftTokens.length < 2) {
     return undefined;
   }
@@ -733,7 +748,90 @@ function parseValueDeclaration(line: string): ParsedValueDeclaration | undefined
     return undefined;
   }
 
+  // ------------------------------------------------------------------
+  // Validate this is REALLY a declaration and not an assignment.
+  //
+  // VALID:
+  //
+  //   int value = 0;
+  //   const uint32_t test = 1;
+  //   MyType obj = ...
+  //
+  // INVALID:
+  //
+  //   value = 0;
+  //   result = 10;
+  // ------------------------------------------------------------------
+
+  const TYPE_LIKE_TOKENS = new Set([
+    "const",
+    "constexpr",
+    "volatile",
+    "static",
+    "extern",
+    "register",
+    "signed",
+    "unsigned",
+    "short",
+    "long",
+    "char",
+    "int",
+    "float",
+    "double",
+    "bool",
+    "void",
+    "auto",
+    "size_t",
+    "uint8_t",
+    "uint16_t",
+    "uint32_t",
+    "uint64_t",
+    "int8_t",
+    "int16_t",
+    "int32_t",
+    "int64_t",
+  ]);
+
+  // Need at least:
+  //   <type> <name>
+  //
+  // so plain:
+  //   value = 1;
+  // is rejected immediately.
+  if (leftTokens.length < 2) {
+    return undefined;
+  }
+
+  const variableToken = leftTokens[leftTokens.length - 1]
+    .replace(/^[*&]+/, "");
+
+  const typeTokens = leftTokens
+    .slice(0, -1)
+    .map((token) => token.replace(/[*&]+/g, ""));
+
+  if (!/^[A-Za-z_]\w*$/.test(variableToken)) {
+    return undefined;
+  }
+
+  const hasValidType = typeTokens.some((token) => {
+    if (TYPE_LIKE_TOKENS.has(token)) {
+      return true;
+    }
+
+    // Accept custom typedefs / structs:
+    //
+    // MyType value = ...
+    // CONFIG_DATA cfg = ...
+    //
+    return /^[A-Z][A-Za-z0-9_]*$/.test(token);
+  });
+
+  if (!hasValidType) {
+    return undefined;
+  }
+
   let name = leftTokens[leftTokens.length - 1].replace(/^[*&]+/, "");
+
   if (!name && leftTokens.length >= 2) {
     const fallbackToken = leftTokens[leftTokens.length - 2];
     name = fallbackToken.replace(/^[*&]+/, "");
@@ -743,13 +841,30 @@ function parseValueDeclaration(line: string): ParsedValueDeclaration | undefined
     return undefined;
   }
 
+  // Reject multiple declarations:
+  //
+  // int a = 1, b = 2;
+  //
   if (/,\s*[A-Za-z_]\w*\s*=/.test(expr)) {
     return undefined;
   }
 
+  const isConst =
+    leftTokens.includes("const") ||
+    leftTokens.includes("constexpr");
+
+  const isStatic = leftTokens.includes("static");
+
+  // ONLY true constants are treated as "symbol definitions"
+  // for duplicate-definition / variant tracking.
+  const isDefinition = isConst;
+
   return {
     name,
     expr,
+    isConst,
+    isStatic,
+    isDefinition,
   };
 }
 
@@ -893,6 +1008,7 @@ export async function collectDefinesAndConsts(
     const seenDefinesInFile = new Set<string>(); // Track defines per file
 
     let text: string;
+
     if (resolveIncludes) {
       text = await buildMegaContent(
         filePath,
@@ -909,9 +1025,10 @@ export async function collectDefinesAndConsts(
     }
 
     text = stripLineContinuations(text);
+
     const lines = text.split(/\r?\n/);
 
-    let braceDepth = 0;    
+    let braceDepth = 0;
     let conditionalDepth = 0;
 
     for (let i = 0; i < lines.length; i += 1) {
@@ -919,45 +1036,58 @@ export async function collectDefinesAndConsts(
       const lineWithoutComments = stripComments(line);
       const directive = lineWithoutComments.trim();
 
+      // IMPORTANT:
+      // Update brace depth BEFORE parsing.
+      //
+      // This prevents local variables / runtime assignments
+      // inside functions from being treated as global definitions.
+      braceDepth = updateBraceDepth(braceDepth, lineWithoutComments);
+
       // ---- track preprocessor conditionals ----
       if (/^\s*#\s*(if|ifdef|ifndef)\b/.test(directive)) {
         conditionalDepth++;
         continue;
       }
+
       if (/^\s*#\s*endif\b/.test(directive)) {
         conditionalDepth = Math.max(0, conditionalDepth - 1);
         continue;
       }
+
       if (/^\s*#\s*(else|elif)\b/.test(directive)) {
         continue;
       }
 
       // ---- ignore anything inside conditional blocks ----
       if (conditionalDepth > 0) {
-        braceDepth = updateBraceDepth(braceDepth, lineWithoutComments);
         continue;
       }
 
-      // ---- handle #undef (rimuove il define dall'accumulatore globale) ----
+      // ---- handle #undef ----
       const undefFirstPass = directive.match(UNDEF_RX);
+
       if (undefFirstPass) {
         const undefinedName = undefFirstPass[1];
+
         defines.delete(undefinedName);
         consts.delete(undefinedName);
         locations.delete(undefinedName);
         globallyDefinedSymbols.delete(undefinedName);
+
         continue;
       }
 
       // ---- parse defines ----
       const defineName = parseDefineNameDirective(line);
+
       if (defineName) {
         globallyDefinedSymbols.add(defineName);
       }
 
       const parsedDefine = parseDefineDirective(line);
+
       if (parsedDefine && !seenDefinesInFile.has(parsedDefine.name)) {
-        seenDefinesInFile.add(parsedDefine.name); // mark as seen for this file
+        seenDefinesInFile.add(parsedDefine.name);
 
         const { name, expr, params } = parsedDefine;
 
@@ -971,8 +1101,9 @@ export async function collectDefinesAndConsts(
         } else {
           // Allow overwrite in case later file redefines
           defines.set(name, expr);
-          
+
           const unitMatch = line.match(UNIT_COMMENT_RX);
+
           if (unitMatch) {
             units.set(name, unitMatch[1]);
           }
@@ -982,59 +1113,85 @@ export async function collectDefinesAndConsts(
           } catch {}
 
           defineConditions.set(name, "always");
+
           const location: SymbolDefinitionLocation = {
             file: path.relative(workspaceRoot, filePath),
             line: i + 1
           };
+
           locations.set(name, location);
         }
 
         continue;
       }
 
-      // ---- parse global scalar declarations ----
+      // ------------------------------------------------------------------
+      // ONLY collect GLOBAL constant definitions.
+      //
+      // Ignore:
+      //   - local variables
+      //   - runtime assignments
+      //   - anything inside functions/scopes
+      // ------------------------------------------------------------------
+
       if (braceDepth === 0) {
         const parsedValueDeclaration = parseValueDeclaration(line);
-        if (parsedValueDeclaration && !seenDefinesInFile.has(parsedValueDeclaration.name)) {
+
+        if (
+          parsedValueDeclaration &&
+          parsedValueDeclaration.isDefinition &&
+          !seenDefinesInFile.has(parsedValueDeclaration.name)
+        ) {
           seenDefinesInFile.add(parsedValueDeclaration.name);
 
-          const { name, expr } = parsedValueDeclaration;
-          defines.set(name, expr);
+          const { name, expr, isStatic } = parsedValueDeclaration;
 
-          const unitMatch = line.match(UNIT_COMMENT_RX);
-          if (unitMatch) {
-            units.set(name, unitMatch[1]);
+          // Ignore ALL static variables, including static const
+          if (!isStatic) {
+            defines.set(name, expr);
+
+            const unitMatch = line.match(UNIT_COMMENT_RX);
+
+            if (unitMatch) {
+              units.set(name, unitMatch[1]);
+            }
+
+            try {
+              consts.set(name, safeEval(expr));
+            } catch {}
+
+            const location: SymbolDefinitionLocation = {
+              file: path.relative(workspaceRoot, filePath),
+              line: i + 1
+            };
+
+            locations.set(name, location);
           }
-
-          try {
-            consts.set(name, safeEval(expr));
-          } catch {}
-
-          const location: SymbolDefinitionLocation = {
-            file: path.relative(workspaceRoot, filePath),
-            line: i + 1
-          };
-          locations.set(name, location);
         }
       }
 
-      braceDepth = updateBraceDepth(braceDepth, lineWithoutComments);
     }
 
-    // ── Enum members ──────────────────────────────────────────────────────────
-    // Run once per file after line-by-line scanning so enum constants are
-    // available as symbol values (enables ghost expansion of e.g. SCREEN_OFF).
+    // Enum members are extracted once per file. Keeping this outside the
+    // line loop avoids re-parsing the whole file for every line at startup.
     const strippedForEnums = stripComments(text);
     for (const member of extractEnumMembers(strippedForEnums)) {
-      if (seenDefinesInFile.has(member.name)) continue;
+      if (seenDefinesInFile.has(member.name)) {
+        continue;
+      }
+
       seenDefinesInFile.add(member.name);
+
       if (!defines.has(member.name)) {
         defines.set(member.name, String(member.value));
       }
+
       if (!consts.has(member.name)) {
         consts.set(member.name, member.value);
       }
-      defineConditions.set(member.name, 'always');
+
+      defineConditions.set(member.name, "always");
+
       if (!locations.has(member.name)) {
         locations.set(member.name, {
           file: path.relative(workspaceRoot, filePath),
@@ -1100,6 +1257,7 @@ export async function collectDefinesAndConsts(
         isDirectiveLine = true;
       } else {
         const ifndefMatch = directiveLine.match(IFNDEF_RX);
+
         if (ifndefMatch) {
           const branchCondition = isTopLevelIncludeGuard(
             lines,
@@ -1127,6 +1285,7 @@ export async function collectDefinesAndConsts(
           isDirectiveLine = true;
         } else {
           const ifMatch = directiveLine.match(IF_RX);
+
           if (ifMatch) {
             const rawCondition = ifMatch[1];
             const branchCondition = resolveCondition(
@@ -1146,61 +1305,94 @@ export async function collectDefinesAndConsts(
 
             currentCondition = activeCondition;
             isDirectiveLine = true;
-          } else {
-            const elifMatch = directiveLine.match(ELIF_RX);
-            if (elifMatch && conditionalStack.length > 0) {
-              const frame = conditionalStack[conditionalStack.length - 1];
-              const rawCondition = elifMatch[1];
-              const branchCondition = resolveCondition(
-                rawCondition,
-                defines,
-                consts,
-                activeDefinedSymbols,
-                output
-              );
-              const previousBranchExclusion = buildElseCondition(frame.branchConditions);
-              const localCondition =
-                previousBranchExclusion === "1"
-                  ? branchCondition
-                  : `(${previousBranchExclusion}) && (${branchCondition})`;
-
-              frame.branchConditions.push(branchCondition);
-              frame.activeCondition = combineConditions(
-                frame.parentCondition,
-                localCondition
-              );
-              currentCondition = frame.activeCondition;
-              isDirectiveLine = true;
-            } else if (ELSE_RX.test(directiveLine) && conditionalStack.length > 0) {
-              const frame = conditionalStack[conditionalStack.length - 1];
-              const elseCondition = buildElseCondition(frame.branchConditions);
-
-              frame.activeCondition = combineConditions(
-                frame.parentCondition,
-                elseCondition
-              );
-              currentCondition = frame.activeCondition;
-              isDirectiveLine = true;
-            } else if (ENDIF_RX.test(directiveLine) && conditionalStack.length > 0) {
-              const frame = conditionalStack.pop();
-              currentCondition = frame?.parentCondition ?? null;
-              isDirectiveLine = true;
-            } else {
-              const undefMatch = directiveLine.match(UNDEF_RX);
-              if (undefMatch) {
-                const undefName = undefMatch[1];
-                activeDefinedSymbols.delete(undefName);
-                defines.delete(undefName);
-                consts.delete(undefName);
-                isDirectiveLine = true;
-              }
-            }
           }
         }
       }
 
       if (!isDirectiveLine) {
+        const elifMatch = directiveLine.match(ELIF_RX);
+        if (elifMatch) {
+          const frame = conditionalStack[conditionalStack.length - 1];
+
+          if (frame) {
+            const previousBranchesCondition = buildElseCondition(frame.branchConditions);
+            const branchTestCondition = resolveCondition(
+              normalizeDirectiveCondition(elifMatch[1]),
+              defines,
+              consts,
+              activeDefinedSymbols,
+              output
+            );
+            const branchCondition = combineConditions(
+              previousBranchesCondition,
+              branchTestCondition
+            );
+            const activeCondition = combineConditions(
+              frame.parentCondition,
+              branchCondition
+            );
+
+            frame.branchConditions.push(branchCondition);
+            frame.activeCondition = activeCondition;
+            currentCondition = activeCondition;
+          }
+
+          isDirectiveLine = true;
+        } else if (ELSE_RX.test(directiveLine)) {
+          const frame = conditionalStack[conditionalStack.length - 1];
+
+          if (frame) {
+            const branchCondition = buildElseCondition(frame.branchConditions);
+            const activeCondition = combineConditions(
+              frame.parentCondition,
+              branchCondition
+            );
+
+            frame.branchConditions.push(branchCondition);
+            frame.activeCondition = activeCondition;
+            currentCondition = activeCondition;
+          }
+
+          isDirectiveLine = true;
+        } else if (ENDIF_RX.test(directiveLine)) {
+          const frame = conditionalStack.pop();
+          currentCondition = frame?.parentCondition ?? null;
+          isDirectiveLine = true;
+        } else {
+          const undefMatch = directiveLine.match(UNDEF_RX);
+
+          if (undefMatch) {
+            let isActiveDirective = true;
+
+            if (currentCondition) {
+              try {
+                isActiveDirective = safeEval(currentCondition) !== 0;
+              } catch {
+                isActiveDirective = true;
+              }
+            }
+
+            if (isActiveDirective) {
+              const undefName = undefMatch[1];
+              activeDefinedSymbols.delete(undefName);
+              defines.delete(undefName);
+              consts.delete(undefName);
+              defineConditions.delete(undefName);
+              locations.delete(undefName);
+            }
+
+            isDirectiveLine = true;
+          }
+        }
+      }
+
+      // ------------------------------------------------------------------
+      // Parse active content
+      // ------------------------------------------------------------------
+
+      if (!isDirectiveLine) {
         let isActiveBranch = true;
+
         if (currentCondition) {
           // output?.appendLine(`[CPP2] Eval condition "${currentCondition}"`);
           try {
@@ -1218,7 +1410,6 @@ export async function collectDefinesAndConsts(
           : "0";
 
         if (!isActiveBranch) {
-          braceDepth = updateBraceDepth(braceDepth, lineWithoutComments);
           continue;
         }
 
@@ -1228,6 +1419,7 @@ export async function collectDefinesAndConsts(
         }
 
         const parsedDefine = parseDefineDirective(line);
+
         if (parsedDefine && !seenDefinesInFile.has(parsedDefine.name)) {
           seenDefinesInFile.add(parsedDefine.name);
           const { name, expr, params } = parsedDefine;
@@ -1244,7 +1436,7 @@ export async function collectDefinesAndConsts(
             if (!defines.has(name)) {
               defines.set(name, expr);
             }
-            
+
             const unitMatch = line.match(UNIT_COMMENT_RX);
             if (unitMatch) {
               units.set(name, unitMatch[1]);
@@ -1258,6 +1450,7 @@ export async function collectDefinesAndConsts(
             };
 
             const variantKey = `${name}:${location.file}:${location.line}`;
+
             if (!seenVariants.has(variantKey)) {
               seenVariants.add(variantKey);
 
@@ -1274,48 +1467,67 @@ export async function collectDefinesAndConsts(
               locations.set(name, location);
             }
           }
-        } else if (braceDepth === 0) {
+        }
+
+        // ------------------------------------------------------------------
+        // ONLY collect GLOBAL constant definitions.
+        // Ignore local/runtime variables.
+        // ------------------------------------------------------------------
+
+        else if (braceDepth === 0 && currentCondition === null) {
           const parsedValueDeclaration = parseValueDeclaration(line);
-          if (parsedValueDeclaration && !seenDefinesInFile.has(parsedValueDeclaration.name)) {
+
+          if (
+            parsedValueDeclaration &&
+            parsedValueDeclaration.isDefinition &&
+            !seenDefinesInFile.has(parsedValueDeclaration.name)
+          ) {
             seenDefinesInFile.add(parsedValueDeclaration.name);
 
-            const { name, expr } = parsedValueDeclaration;
+            const { name, expr, isStatic } = parsedValueDeclaration;
 
-            if (!defines.has(name)) {
-              defines.set(name, expr);
-            }
+            // Ignore ALL static variables, including static const
+            if (!isStatic) {
+              if (!defines.has(name)) {
+                defines.set(name, expr);
+              }
 
-            const unitMatch = line.match(UNIT_COMMENT_RX);
-            if (unitMatch) {
-              units.set(name, unitMatch[1]);
-            }
+              const unitMatch = line.match(UNIT_COMMENT_RX);
 
-            defineConditions.set(name, definitionCondition);
+              if (unitMatch) {
+                units.set(name, unitMatch[1]);
+              }
 
-            try {
-              consts.set(name, safeEval(expr));
-            } catch {}
+              defineConditions.set(name, definitionCondition);
 
-            const location: SymbolDefinitionLocation = {
-              file: path.relative(workspaceRoot, filePath),
-              line: i + 1
-            };
+              try {
+                consts.set(name, safeEval(expr));
+              } catch {}
 
-            const variantKey = `${location.file}:${location.line}`;
-            if (!seenVariants.has(variantKey)) {
-              seenVariants.add(variantKey);
+              const location: SymbolDefinitionLocation = {
+                file: path.relative(workspaceRoot, filePath),
+                line: i + 1
+              };
 
-              const variants = defineVariants.get(name) ?? [];
-              variants.push({
-                ...location,
-                expr,
-                condition: definitionCondition
-              });
-              defineVariants.set(name, variants);
-            }
+              const variantKey = `${location.file}:${location.line}`;
 
-            if (!locations.has(name)) {
-              locations.set(name, location);
+              if (!seenVariants.has(variantKey)) {
+                seenVariants.add(variantKey);
+
+                const variants = defineVariants.get(name) ?? [];
+
+                variants.push({
+                  ...location,
+                  expr,
+                  condition: definitionCondition
+                });
+
+                defineVariants.set(name, variants);
+              }
+
+              if (!locations.has(name)) {
+                locations.set(name, location);
+              }
             }
           }
         }

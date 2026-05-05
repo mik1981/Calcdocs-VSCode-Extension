@@ -52,7 +52,7 @@
 // Cast operator
 #define CAST_INT ((int)5.7)
 #define CAST_INT16 ((int8_t)50000)
-#define CAST_UINT16 ((uint8_t)50000)
+#define CAST_UINT16 ((uint16_t)50000)
 
 // Precedence and combination
 #define PRECEDENCE (2 + 3 * 4)

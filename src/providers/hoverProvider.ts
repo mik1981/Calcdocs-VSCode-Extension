@@ -717,10 +717,12 @@ export function registerCppHoverProvider(
         const inDocumentDefinitions = findDocumentSymbolDefinitions(
           document.getText(),
           word
-        ).map((definition) => ({
-          expr: definition.parsed.expr,
-          line: definition.line,
-        }));
+        )
+          .filter((definition) => !definition.isAssignment)
+          .map((definition) => ({
+            expr: definition.parsed.expr,
+            line: definition.line,
+          }));
 
         const sections = buildSymbolHoverSections(
           word,

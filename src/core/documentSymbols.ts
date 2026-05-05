@@ -8,6 +8,8 @@ export type DocumentSymbolDefinition = {
   line: number;
   lineText: string;
   isDefineLine: boolean;
+  /** True for runtime assignments (e.g. `value = NEXT;`), not declarations. */
+  isAssignment?: boolean;
   /** True for standalone function-call statements (e.g. HAL_delay(X)). */
   isFunctionCallStmt?: boolean;
   parsed: CppSymbolDefinition;
@@ -95,65 +97,62 @@ export function collectDocumentSymbolDefinitions(
                 assignName
               );
 
-
-
-    //         if (!isCKeyword && assignExpr) {
-    //           definitions.push({
-    //             line: startLine,
-    //             lineText: segment + ";",
-    //             isDefineLine: false,
-    //             parsed: { name: assignName, expr: assignExpr },
-    //           });
-    //         }
-    //       }
-    //     }
-    //   }
-    // }
-
-
             if (!isCKeyword && assignExpr) {
               definitions.push({
                 line: startLine,
                 lineText: segment + ";",
                 isDefineLine: false,
+                isAssignment: true,
                 parsed: { name: assignName, expr: assignExpr },
               });
             }
           } else {
-            // Detect standalone function-call statements, e.g. HAL_delay(COMMENTED).
-            // These are shown only as ghost value or via hover, never as code lens.
-            const callNameMatch = trimmed.match(/^([A-Za-z_]\w*)\s*\(/);
-            if (callNameMatch) {
-              const callName = callNameMatch[1];
-              const isCKeywordOrType =
-                /^(if|else|while|for|do|switch|case|break|continue|return|goto|sizeof|typeof|typedef|struct|union|enum|const|volatile|static|extern|inline|void|int|char|short|long|float|double|unsigned|signed|bool|NULL|null|true|false)$/.test(
-                  callName
-                );
-              if (!isCKeywordOrType) {
-                // Verify outer parentheses are balanced (the call ends at the last char)
-                let parenDepth = 0;
-                let callEnd = -1;
-                for (let ci = 0; ci < trimmed.length; ci++) {
-                  if (trimmed[ci] === "(") {
-                    parenDepth++;
-                  } else if (trimmed[ci] === ")") {
-                    parenDepth--;
-                    if (parenDepth === 0) {
-                      callEnd = ci;
-                      break;
+            // Detect switch case statements: case APP_INIT:
+            const caseMatch = trimmed.match(/^\s*case\s+([A-Za-z_]\w*)\s*:/);
+            if (caseMatch) {
+              const caseSymbol = caseMatch[1];
+              definitions.push({
+                line: startLine,
+                lineText: segment + ";",
+                isDefineLine: false,
+                parsed: { name: "", expr: caseSymbol },
+              });
+            } else {
+              // Detect standalone function-call statements, e.g. HAL_delay(COMMENTED).
+              // These are shown only as ghost value or via hover, never as code lens.
+              const callNameMatch = trimmed.match(/^([A-Za-z_]\w*)\s*\(/);
+              if (callNameMatch) {
+                const callName = callNameMatch[1];
+                const isCKeywordOrType =
+                  /^(if|else|while|for|do|switch|case|break|continue|return|goto|sizeof|typeof|typedef|struct|union|enum|const|volatile|static|extern|inline|void|int|char|short|long|float|double|unsigned|signed|bool|NULL|null|true|false)$/.test(
+                    callName
+                  );
+                if (!isCKeywordOrType) {
+                  // Verify outer parentheses are balanced (the call ends at the last char)
+                  let parenDepth = 0;
+                  let callEnd = -1;
+                  for (let ci = 0; ci < trimmed.length; ci++) {
+                    if (trimmed[ci] === "(") {
+                      parenDepth++;
+                    } else if (trimmed[ci] === ")") {
+                      parenDepth--;
+                      if (parenDepth === 0) {
+                        callEnd = ci;
+                        break;
+                      }
                     }
                   }
-                }
-                const balanced = callEnd !== -1;
-                const funcCallText = balanced ? trimmed.slice(0, callEnd + 1).trim() : trimmed;
-                if (balanced) {
-                definitions.push({
-                  line: startLine,
-                  lineText: segment + ";",
-                  isDefineLine: false,
-                  isFunctionCallStmt: true,
-                  parsed: { name: "", expr: funcCallText },
-                });
+                  const balanced = callEnd !== -1;
+                  const funcCallText = balanced ? trimmed.slice(0, callEnd + 1).trim() : trimmed;
+                  if (balanced) {
+                    definitions.push({
+                      line: startLine,
+                      lineText: segment + ";",
+                      isDefineLine: false,
+                      isFunctionCallStmt: true,
+                      parsed: { name: "", expr: funcCallText },
+                    });
+                  }
                 }
               }
             }
@@ -161,10 +160,6 @@ export function collectDocumentSymbolDefinitions(
         }
       }
     }
-
-
-
-
 
     braceDepth = updateBraceDepth(braceDepth, lineText);
     lineIndex += 1;
