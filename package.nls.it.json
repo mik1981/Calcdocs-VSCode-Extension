@@ -73,6 +73,5 @@
   "config.formulaHeader.outputPath": "CalcDocs: Percorso per header C generato con macro formule",
   "config.formulaHeader.includeResolvedValues": "CalcDocs: Aggiungi valore numerico risolto come commento accanto a ogni #define generato.",
   "command.generateFormulaHeader.title": "CalcDocs: Genera Header Formule",
-  "view.inlineCalcResults.name": "CalcDocs: Risultati Inline CalcDocs",
-  "command.generateCompileCommands.title": "CalcDocs: Genera compile_commands.json per clangd"
+  "view.inlineCalcResults.name": "CalcDocs: Risultati Inline CalcDocs"
 }

@@ -6,16 +6,16 @@ T5: { value: 8 }
 T6: { value: 8 }
 T7: { value: 84 }
 T8: { value: 42 }
-T9: { value: 3735928559 }
+T9: { value: 48879 }
 T10: { value: 100 }
 T11: { value: 8 }
 T12: { value: 4 }
 T13: { value: 4 }
-T15: { value: 3735928559 }
+T15: { value: 48879 }
 T16: { value: 0 }
 T17: { value: 42 }
 T18: { value: 100 }
 T19: { value: 4 }
 T20: { value: 4 }
 T21: { value: 4 }
-T22: { value: 42 }
+

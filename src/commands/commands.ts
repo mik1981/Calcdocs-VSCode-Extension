@@ -9,7 +9,6 @@ import { CalcDocsState, SymbolDefinitionLocation } from "../core/state";
 import { AnalysisScheduler } from "../infra/watchers";
 import { pickWord } from "../utils/editor";
 import { localize } from "../utils/localize";
-import { generateCompileCommands, writeCompileCommandsToFile, Configuration } from "../utils/generate-compile-commands";
 import { generateFormulaHeader } from "../utils/headerGenerator";
 import type { FormulaRegistry } from "../formulaOutline/formulaRegistry";
 
@@ -175,67 +174,6 @@ export function registerCommands({
        // This is equivalent to File -> Open Folder, opens in a new separate window
        await vscode.commands.executeCommand('vscode.openFolder', examplesFolderUri, true);
        state.output.info("openTestFolder: Opened examples/ in new window");
-     }),
-
-     vscode.commands.registerCommand("calcdocs.generateCompileCommands", async () => {
-       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-       
-       if (!workspaceRoot) {
-         await vscode.window.showWarningMessage("No workspace folder open.");
-         return;
-       }
-
-// No vscode-clangd extension required - internal client auto-reloads compile_commands.json
-
-       await vscode.window.withProgress({
-         location: vscode.ProgressLocation.Notification,
-         title: "Generating compile_commands.json",
-         cancellable: false
-       }, async (progress) => {
-          // 1. Fase di scansione
-          progress.report({ message: "Scanning project files..." });
-
-          const extensionConfig = getConfig();
-          const genConfig: Configuration = {
-            projectRoot: workspaceRoot,
-            // pathMode: "relative",
-            exclusions: [
-              ...extensionConfig.ignoredDirs,
-              ".git",
-              "build",
-              "dist",
-              "node_modules",
-              "Tools",
-              "Bitmap/_Old"
-            ],
-            compileFlags: [
-              "-std=c99"
-            ]
-          };
-
-          const result = generateCompileCommands(genConfig);
-
-           // 2. Fase di indicizzazione
-           progress.report({ message: "Indexing source and header files..." });
-
-           // 3. Fase di scrittura
-           progress.report({ message: "Writing compile_commands.json..." });
-           const outputPath = path.join(workspaceRoot, "compile_commands.json");
-           writeCompileCommandsToFile(result, outputPath);
-       
-           // La progress bar si chiude qui automaticamente alla fine della callback
-
-          //  progress.report({ message: "Complete!" });
-
-          //  await vscode.window.showInformationMessage(
-          //    `✅ compile_commands.json generated successfully!\n` +
-          //    `${result.processedFiles} C files processed, ${result.includeDirectories} include directories found`
-          //  );
-         });
-        // 4. Notifica finale persistente (fuori dal blocco withProgress)
-        vscode.window.showInformationMessage(
-            `✅ compile_commands.json generated successfully!`
-          );
      })
   );
 
@@ -256,7 +194,6 @@ export function registerCommands({
           | "toggleInlineHover"
           | "toggleGhostValues"
           | "showOutput"
-          | "generateCompileCommands"
           | "generateFormulaHeader"
           | "openSettings";
       }
@@ -333,11 +270,6 @@ export function registerCommands({
     // Show if workspace open (internal clangd handles reload - no extension needed)
     if (hasWorkspace) {
       picks.push({
-        label: "$(file-code) Generate compile_commands.json",
-        description: "Scan project and create automatically clangd configuration file (internal client auto-reloads)",
-        action: "generateCompileCommands",
-      });
-      picks.push({
         label: "$(file-code) Generate Formulas Header",
         description: `C macros to "${getConfig().formulaHeader.outputPath || 'macro_generate.h'}"`,
         action: "generateFormulaHeader",
@@ -395,8 +327,7 @@ export function registerCommands({
         );
         return;
 
-      case "generateCompileCommands":
-        await vscode.commands.executeCommand("calcdocs.generateCompileCommands");
+      default:
         return;
     }
   }

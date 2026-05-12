@@ -153,6 +153,9 @@ function scaleDimensions(value: DimensionVector, exponent: number): DimensionVec
 }
 
 export function dimensionsEqual(left: DimensionVector, right: DimensionVector): boolean {
+  if (!left || !right) {
+    return false;
+  }
   return (
     Math.abs(left.M - right.M) < EPSILON &&
     Math.abs(left.L - right.L) < EPSILON &&
@@ -236,7 +239,7 @@ export function normalizeUnitToken(rawUnit: string): string {
   return UNIT_ALIASES.get(normalized) ?? normalized;
 }
 
-function resolveUnitSpec(rawUnit: string): UnitSpec | undefined {
+export function resolveUnitSpec(rawUnit: string): UnitSpec | undefined {
   const normalized = normalizeUnitToken(rawUnit);
   return getEngineUnitSpec(normalized);
 }
@@ -1065,7 +1068,8 @@ function isKnownUnitWord(token: string): boolean {
 function isLikelyInlineCalculationExpression(
   expression: string,
   state: CalcDocsState,
-  knownInlineVariables: Map<string, number>
+  knownInlineVariables: Map<string, number>,
+  outputUnit?: string
 ): boolean {
   // const logPrefix = "[inline]";
   const trimmed = expression.trim();
@@ -1105,7 +1109,11 @@ function isLikelyInlineCalculationExpression(
     );
   });
 
-  if (!hasMathOperator && !hasFunctionCall) {
+  if (
+    !hasMathOperator &&
+    !hasFunctionCall &&
+    !(outputUnit && (hasNumber || hasAtVariable || hasQuantity || hasKnownSymbolToken))
+  ) {
     return false;
   }
   const hasOnlyUnknownWords =
@@ -1214,7 +1222,12 @@ export function evaluateInlineCalcs(
   for (const command of commands) {
     if (
       command.kind === "calc" &&
-      !isLikelyInlineCalculationExpression(command.expression, state, variables)
+      !isLikelyInlineCalculationExpression(
+        command.expression,
+        state,
+        variables,
+        command.outputUnit
+      )
     ) {
       continue;
     }

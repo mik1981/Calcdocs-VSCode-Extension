@@ -73,6 +73,5 @@
   "config.formulaHeader.outputPath": "CalcDocs: Path for generated C header with formula macros",
   "config.formulaHeader.includeResolvedValues": "CalcDocs: Add resolved numeric value as comment next to each generated #define.",
   "command.generateFormulaHeader.title": "CalcDocs: Generate Formulas Header",
-  "view.inlineCalcResults.name": "CalcDocs: Inline Results",
-  "command.generateCompileCommands.title": "CalcDocs: Generate compile_commands.json for clangd"
+  "view.inlineCalcResults.name": "CalcDocs: Inline Results"
 }

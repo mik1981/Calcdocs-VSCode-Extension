@@ -1,14 +1,31 @@
 # Changelog
 
+## [0.2.7] - 05/12/2026
+
+- Fixed detection of multiline C constructs
+- Added example case 12_inline_units
+- Removed generate compile_commands.json from the quick menu
+- Added support for direct unit conversion; examples:
+  - @p1 = 1 atm
+  - @p1 -> mbar displays <- 1013.25 mbar at the end of the line
+  - @p1 -> Pa displays <- 101325 Pa at the end of the line
+- Added ghost values for inline calculations
+
+### Upcoming Features:
+
+- Visual dependency graph
+- Fixed-point Analyzer (Q15/Q31)
+- Live Register Decoder
+
 ## [0.2.6] - 05/05/2026
 
 - Add preview support for the switch/case keyword
 - Improve accuracy of multiple definition warnings
 - Improve conditional stack handling (#if/#elif/#else/endif) in cppParser
 - Parser accuracy for advanced C types and preprocessor conditions
-- Support for C operators (sizeof, _Alignas, _Alignof, _Static_assert, _Bool, _Complex, _Imaginary, #undef)
 - Enum member extraction and auto-increment handling
 - Auto-detect hex or binary view formats
+- Added example case 11_advanced_types_operators
 
 ## [0.2.5] - 04/28/2026
 
@@ -16,7 +33,6 @@
 - Extended calcdocs.generateFormulaHeader to all formula*.yaml files in the workspace
 - Fixed license badge in README.md
 - Added example case 10_c_operators
-
 - Support to c operator like sizeof, _Alignas, _Alignof, _Static_assert, _Bool, _Complex, _Imaginary e #undef
 
 ## [0.2.4] - 04/23/2026

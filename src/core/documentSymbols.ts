@@ -1,5 +1,6 @@
 import { parseCppSymbolDefinition, type CppSymbolDefinition } from "./cppParser";
 import { updateBraceDepth } from "../utils/braceDepth";
+import { stripComments } from "../utils/text";
 
 export const DEFINE_DIRECTIVE_RX = /^\s*#\s*define\b/;
 const CONTROL_FLOW_RX = /^\s*(if|while|for|switch|return|do)\b/;
@@ -14,6 +15,44 @@ export type DocumentSymbolDefinition = {
   isFunctionCallStmt?: boolean;
   parsed: CppSymbolDefinition;
 };
+
+
+function isStatementIncomplete(text: string): boolean {
+  const s = stripComments(text).trim();
+  if (!s) return false;
+
+  if (/^(case\b.*|default)\s*:\s*$/.test(s)) {
+    return false;
+  }
+
+  // 1. parentesi / brace sbilanciate
+  let paren = 0, brace = 0, bracket = 0;
+  for (const c of s) {
+    if (c === "(") paren++;
+    else if (c === ")") paren--;
+    // else if (c === "{") brace++;
+    // else if (c === "}") brace--;
+    else if (c === "[") bracket++;
+    else if (c === "]") bracket--;
+  }
+  if (paren > 0 || brace > 0 || bracket > 0) return true;
+
+  // 2. operatori binari a fine riga
+  if (/[+\-*/%&|^=,?:]$/.test(s)) return true;
+
+  // 3. keyword di controllo con '('
+  if (/^(if|for|while|switch)\b[^(]*\([^)]*$/.test(s)) return true;
+
+  // 4. chiamata funzione aperta
+  if (/^[A-Za-z_]\w*\s*\([^)]*$/.test(s)) return true;
+
+  // 5. nessun ';' ma sembra un'espressione
+  if (!s.endsWith(";") && /[A-Za-z0-9_)]$/.test(s)) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Collects C/C++ declarations parsed by parseCppSymbolDefinition.
@@ -40,6 +79,19 @@ export function collectDocumentSymbolDefinitions(
     }
 
     const isDefineLine = DEFINE_DIRECTIVE_RX.test(lineText);
+
+    // Merge multi-line C statements (not #define) where semicolon is missing
+    if (!isDefineLine && !lineText.trimStart().startsWith("#")) {
+      while (
+        lineIndex + 1 < lines.length &&
+        isStatementIncomplete(lineText) &&
+        !lines[lineIndex + 1].trimStart().startsWith("#")
+      ) {
+        lineIndex++;
+        lineText = `${lineText.trimEnd()} ${lines[lineIndex].trim()}`;
+      }
+    }
+
     const isControlFlow = CONTROL_FLOW_RX.test(lineText);
 
     if (isDefineLine) {

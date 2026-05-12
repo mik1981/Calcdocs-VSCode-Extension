@@ -5,6 +5,7 @@ import { CalcDocsState } from "../core/state";
 
 const CODELENS_MAX_TITLE_LEN = 160;
 const CODELENS_SOURCE_PREVIEW_LEN = 80;
+const INLINE_CALC_GHOST_LANGUAGES = new Set(["c", "cpp", "plaintext", "yaml"]);
 
 function clampText(text: string, max: number): string {
   if (text.length <= max) {
@@ -85,9 +86,7 @@ export class InlineCalcCodeLensProvider implements vscode.CodeLensProvider {
       }
 
       // Skip if ghost takes priority on this line
-      if (this.state.inlineGhostEnabled && 
-          result.line >= 0 && result.line < document.lineCount &&
-          require("../core/ghostPolicy").shouldRenderGhost(document, result.line, this.state)) {
+      if (this.state.inlineGhostEnabled && INLINE_CALC_GHOST_LANGUAGES.has(document.languageId)) {
         continue;
       }
 

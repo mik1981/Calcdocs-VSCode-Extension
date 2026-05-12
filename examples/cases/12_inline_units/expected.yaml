@@ -1,0 +1,44 @@
+# Inline calculations with output-unit conversions.
+# Values are expressed in the unit requested by each `-> unit` annotation.
+
+# 12 V / 4.7 kOhm = 0.002553191489 A = 2.553191489 mA
+I_mA: { value: 2.553191489 }
+
+# 12 V * (12 V / 4.7 kOhm) = 0.030638297872 W
+P_W: { value: 0.030638297872 }
+
+# 12 V = 12000 mV
+U_mv: { value: 12000 }
+
+# 0.95 m * 0.9 m = 0.855 m2
+A_m2: { value: 0.855 }
+
+# 2.5 lb = 1133.980925 g
+M_g: { value: 1133.980925 }
+
+# 1 atm -> mbar
+P_mbar: { value: 1013.25 }
+
+# 1 atm -> Pa
+P_Pa: { value: 101325 }
+
+# 1 atm + 1 bar = 1.986923266716 atm
+P_atm: { value: 1.986923267 }
+
+# 4.74 L/min = 0.000079 m3/s
+Q_m3s: { value: 0.000079 }
+
+# Temperature units are currently modeled linearly, so degC -> K has no offset.
+T_K: { value: 25 }
+
+# 1.5 h = 5400 s
+T_s: { value: 5400 }
+
+# 0.25 * 100% = 25%
+R_pct: { value: 25 }
+
+# 4.024 m / 100 s = 0.04024 m/s
+V_mps: { value: 0.04024 }
+
+# 3000 rpm -> rad/s
+V_rads: {value: 314.1592653589793 }

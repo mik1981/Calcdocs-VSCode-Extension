@@ -3,7 +3,9 @@ import * as vscode from "vscode";
 import { collectCppCodeLensItems } from "./cppCodeLensItems";
 import { shouldRenderGhostInsteadOfCodeLens } from "./ghostPolicy";
 import { CalcDocsState } from "./state";
+import { evaluateInlineCalcs } from "./inlineCalc";
 
+const INLINE_CALC_GHOST_LANGUAGES = new Set(["c", "cpp", "plaintext", "yaml"]);
 const MAX_GHOST_TEXT_LEN = 180;
 
 function clampGhostText(text: string): string {
@@ -72,30 +74,52 @@ export class GhostValueProvider {
     }
 
     const document = editor.document;
+
     if (!this.state.enabled || !this.state.inlineGhostEnabled || document.languageId !== "c") {
       editor.setDecorations(this.decorationType, []);
       return;
     }
 
-    const maxItemsPerFile = Math.max(1, this.state.cppCodeLens.maxItemsPerFile);
-    // Ghost values are less invasive than code lenses, so we allow collecting more items
-    // to ensure function calls or assignments later in the file are not truncated.
-    const items = collectCppCodeLensItems(document, this.state, maxItemsPerFile * 4);
     const perLineGhostTexts = new Map<number, string[]>();
 
-    for (const item of items) {
-      if (!shouldRenderGhostInsteadOfCodeLens(document, item, this.state)) {
-        continue;
-      }
+    // ── C/C++ code-lens ghost values (existing logic, C only) ──────────────
+    if (document.languageId === "c") {
+      const maxItemsPerFile = Math.max(1, this.state.cppCodeLens.maxItemsPerFile);
+      const items = collectCppCodeLensItems(document, this.state, maxItemsPerFile * 4);
 
-      const normalizedTitle = extractPureGhostValue(item.title, item.kind);
-      if (!normalizedTitle) {
-        continue;
-      }
+      for (const item of items) {
+        if (!shouldRenderGhostInsteadOfCodeLens(document, item, this.state)) {
+          continue;
+        }
 
-      const texts = perLineGhostTexts.get(item.line) ?? [];
-      texts.push(normalizedTitle);
-      perLineGhostTexts.set(item.line, texts);
+        const normalizedTitle = extractPureGhostValue(item.title, item.kind);
+        if (!normalizedTitle) {
+          continue;
+        }
+
+        const texts = perLineGhostTexts.get(item.line) ?? [];
+        texts.push(normalizedTitle);
+        perLineGhostTexts.set(item.line, texts);
+      }
+    }
+
+    // ── Inline-calc ghost values for all supported languages ───────────────
+    if (INLINE_CALC_GHOST_LANGUAGES.has(document.languageId)) {
+      const results = evaluateInlineCalcs(
+        document.getText(),
+        this.state,
+        { includeAssignments: false },
+        document.languageId
+      );
+
+      for (const result of results) {
+        if (result.line < 0 || result.line >= document.lineCount) {
+          continue;
+        }
+        const texts = perLineGhostTexts.get(result.line) ?? [];
+        texts.push(result.displayValue);
+        perLineGhostTexts.set(result.line, texts);
+      }
     }
 
     const decorations: vscode.DecorationOptions[] = [];
@@ -109,7 +133,7 @@ export class GhostValueProvider {
         range: new vscode.Range(line, lineText.length, line, lineText.length),
         renderOptions: {
           after: {
-            contentText: ` <- ${toGhostText(titles)}`,
+            contentText: ` ← ${toGhostText(titles)}`,
           },
         },
       });

@@ -2,7 +2,7 @@
   "name": "calcdocs-vscode-extension",
   "displayName": "CalcDocs - C/C++ Constants & Formula Evaluator",
   "description": "%extension.description%",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "publisher": "convergo-dev",
   "repository": {
     "type": "git",
@@ -392,11 +392,6 @@
       {
         "command": "calcdocs.formulas.foldAll",
         "title": "%command.formulas.foldAll%"
-      },
-      {
-        "command": "calcdocs.generateCompileCommands",
-        "title": "%command.generateCompileCommands.title%",
-        "icon": "$(question)"
       }
     ],
     "menus": {
@@ -461,8 +456,8 @@
     "vscode:prepublish": "npm run build",
     "package": "vsce package --no-dependencies",
     "compile": "tsc -p .",
-    "test": "ts-node examples/runner/testRunner.ts",
-    "test:run": "vitest run",
+    "test": "vitest run --config vitest.config.ts",
+    "test:run": "vitest run --config vitest.config.ts",
     "compile:verify": "npm run compile && npm run test:run",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",

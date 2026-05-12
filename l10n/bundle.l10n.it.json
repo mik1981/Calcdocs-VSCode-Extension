@@ -25,7 +25,6 @@
   "command.goToCounterpart.warningDisabled":"CalcDocs è disabilitato. Riabilitalo per usare 'Go to Counterpart'.",
   "command.goToCounterpart.noFormula":"Nessuna formula trovata per '{0}'",
   "command.pickSymbol.placeholder":"Trovate più definizioni per {0}",
-  "command.generateCompileCommands.title":"Genera compile_commands.json per clangd",
 
   "output.activate":"[activate] CalcDocs",
   "output.deactivate":"[deactivate] CalcDocs",

@@ -1170,8 +1170,7 @@ function formatPreviewNumber(value: number): string {
     return String(value);
   }
 
-  const rounded = Number(value.toFixed(6));
-  return Object.is(rounded, -0) ? "0" : String(rounded);
+  return String(value);
 }
 
 function isReducibleNumericFragment(fragment: string): boolean {
@@ -2656,7 +2655,6 @@ export function buildCompositeExpressionPreview(
 
   try {
     const value = safeEval(evaluableExpanded, context);
-    console.log(`EVAL INPUT: ${evaluableExpanded} --- VALUE: ${value}`);
     // console.log("EVAL SUCCESS on evaluableExpanded:", value);
     return {
       expanded: unwrapParens(simplifiedExpanded),

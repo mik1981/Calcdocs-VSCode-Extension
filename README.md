@@ -6,6 +6,7 @@
 
 Stop expanding macros.
 Stop guessing values.
+Stop losing calculations in: Excel sheets, random .txt notes or forgotten documentation.
 
 👉 Hover any C/C++ constant → see the **final computed value instantly**
 
@@ -15,11 +16,14 @@ No build. No debug. No navigation.
 
 ## ⚡ 5-second demo
 
+### Usefull 1: Coding Evaluator
+
 Write this:
 
 ```c
 #define RPM 1000
 #define SPEED (RPM * 0.10472)
+
 ```
 
 You instantly see:
@@ -34,7 +38,36 @@ You instantly see:
 
 👉 What you see = what your firmware computes
 
-## ⚡ 5-second demo - Macro Chain Revelation
+### Usefull 2: Realtime note taker
+
+Write this:
+
+```c
+// @rpm = 3000 rpm
+// = @rpm -> rad/s
+// = 13 N * 1 m * @rpm -> rad/s
+
+```
+
+You instantly see:
+
+```c
+// @rpm = 3000 rpm
+// = @rpm -> rad/s <- 314.1592653589793 rad/s
+// = 13 N * 1 m * @rpm -> W <- 4084.0704496667313 W
+
+```
+
+CalcDocs evaluates comments in real time and keeps engineering calculations close to the firmware logic.
+
+✅ Unit conversions  
+✅ Realtime calculations  
+✅ Traceable engineering decisions  
+✅ Self-documented firmware  
+
+👉 Your code becomes the documentation
+
+### Usefull 3: Macro Chain Revelation
 
 | File | Screenshot |
 | :---: | :---: |
@@ -84,6 +117,15 @@ it's hard because **values are hidden**.
 * Hover with resolved numeric values
 * CodeLens summaries directly in code
 * Decimal + hex representation
+
+### 🧮 Inline engineering calculator
+
+* Realtime calculations directly in comments
+* Unit conversion (`rpm -> rad/s`, `atm -> Pa`, etc.)
+* Keep formulas near the actual firmware logic
+* Eliminate scattered Excel and text notes
+
+👉 The calculations stay where the engineering decisions are made.
 
 ---
 

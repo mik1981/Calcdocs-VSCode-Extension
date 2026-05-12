@@ -122,6 +122,7 @@ export const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "count", canonical: "count", factorToSi: 1, dimension: dim(0, 0, 0, 0) },
   { token: "ratio", canonical: "ratio", factorToSi: 1, dimension: dim(0, 0, 0, 0) },
   { token: "%", canonical: "%", factorToSi: 0.01, dimension: dim(0, 0, 0, 0) },
+  { token: "pct", canonical: "pct", factorToSi: 0.01, dimension: dim(0, 0, 0, 0) },
   { token: "ppm", canonical: "ppm", factorToSi: 1e-6, dimension: dim(0, 0, 0, 0) },
   { token: "ppb", canonical: "ppb", factorToSi: 1e-9, dimension: dim(0, 0, 0, 0) },
   { token: "ppt", canonical: "ppt", factorToSi: 1e-12, dimension: dim(0, 0, 0, 0) },
@@ -189,7 +190,9 @@ export const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "knot", canonical: "knot", factorToSi: 1852 / 3600, dimension: dim(0, 1, -1, 0) },
   { token: "mps2", canonical: "m/s2", factorToSi: 1, dimension: dim(0, 1, -2, 0) },
   { token: "g0", canonical: "g", factorToSi: 9.80665, dimension: dim(0, 1, -2, 0) },
-  { token: "rpm", canonical: "rpm", factorToSi: 1 / 60, dimension: dim(0, 0, -1, 0) },
+  // Angular speed (radianti al secondo)
+  { token: "rpm", canonical: "rpm", factorToSi: (2 * Math.PI) / 60, dimension: dim(0, 0, -1, 0) },
+  { token: "radps", canonical: "rad/s", factorToSi: 1, dimension: dim(0, 0, -1, 0) },
 
   // Mass
   { token: "kg", canonical: "kg", factorToSi: 1, dimension: dim(1, 0, 0, 0) },
@@ -252,6 +255,7 @@ export const UNIT_SPEC_LIST: UnitSpec[] = [
 
   // Flow rates
   { token: "lpm", canonical: "L/min", factorToSi: 1e-3 / 60, dimension: dim(0, 3, -1, 0) },
+  { token: "mlpm", canonical: "mL/min", factorToSi: 1e-6 / 60, dimension: dim(0, 3, -1, 0) },
   { token: "gpm", canonical: "gal/min", factorToSi: 0.003785411784 / 60, dimension: dim(0, 3, -1, 0) },
   { token: "m3s", canonical: "m3/s", factorToSi: 1, dimension: dim(0, 3, -1, 0) },
   { token: "cfm", canonical: "ft3/min", factorToSi: (0.3048 ** 3) / 60, dimension: dim(0, 3, -1, 0) },
@@ -298,6 +302,71 @@ export const UNIT_SPEC_LIST: UnitSpec[] = [
   { token: "degc", canonical: "degC", factorToSi: 1, dimension: dim(0, 0, 0, 0, 1) },
   { token: "degf", canonical: "degF", factorToSi: 5 / 9, dimension: dim(0, 0, 0, 0, 1) },
   { token: "rankine", canonical: "R", factorToSi: 5 / 9, dimension: dim(0, 0, 0, 0, 1) },
+
+// ── Angular acceleration — T⁻² ────────────────────────────────────────
+  { token: "radps2", canonical: "rad/s²",  factorToSi: 1,                      dimension: dim(0, 0, -2, 0) },
+  { token: "degps2", canonical: "°/s²",    factorToSi: Math.PI / 180,          dimension: dim(0, 0, -2, 0) },
+  { token: "rpmps",  canonical: "rpm/s",   factorToSi: (2 * Math.PI) / 60,     dimension: dim(0, 0, -2, 0) },
+
+  // ── Stiffness / surface tension — N·m⁻¹ = M·T⁻² ──────────────────────
+  { token: "npm",    canonical: "N/m",    factorToSi: 1,                        dimension: dim(1, 0, -2, 0) },
+  { token: "knpm",   canonical: "kN/m",   factorToSi: 1e3,                      dimension: dim(1, 0, -2, 0) },
+  { token: "mnpm",   canonical: "mN/m",   factorToSi: 1e-3,                     dimension: dim(1, 0, -2, 0) },
+  { token: "lbfpin", canonical: "lbf/in", factorToSi: 4.4482216152605 / 0.0254, dimension: dim(1, 0, -2, 0) },
+
+  // ── Mass flow rate — M·T⁻¹ ────────────────────────────────────────────
+  { token: "kgps", canonical: "kg/s",   factorToSi: 1,          dimension: dim(1, 0, -1, 0) },
+  { token: "gps",  canonical: "g/s",    factorToSi: 1e-3,        dimension: dim(1, 0, -1, 0) },
+  { token: "kgpm", canonical: "kg/min", factorToSi: 1 / 60,      dimension: dim(1, 0, -1, 0) },
+  { token: "kgph", canonical: "kg/h",   factorToSi: 1 / 3600,    dimension: dim(1, 0, -1, 0) },
+
+  // ── Moment of inertia — M·L² ──────────────────────────────────────────
+  { token: "kgm2",  canonical: "kg·m²",  factorToSi: 1,    dimension: dim(1, 2, 0, 0) },
+  { token: "kgcm2", canonical: "kg·cm²", factorToSi: 1e-4, dimension: dim(1, 2, 0, 0) },
+  { token: "gcm2",  canonical: "g·cm²",  factorToSi: 1e-7, dimension: dim(1, 2, 0, 0) },
+
+  // ── Kinematic viscosity — L²·T⁻¹ ─────────────────────────────────────
+  { token: "m2ps",  canonical: "m²/s",  factorToSi: 1,    dimension: dim(0, 2, -1, 0) },
+  { token: "mm2ps", canonical: "mm²/s", factorToSi: 1e-6, dimension: dim(0, 2, -1, 0) },
+  { token: "stk",   canonical: "St",    factorToSi: 1e-4, dimension: dim(0, 2, -1, 0) },
+  { token: "cstk",  canonical: "cSt",   factorToSi: 1e-6, dimension: dim(0, 2, -1, 0) },
+
+  // ── Specific energy — L²·T⁻² ─────────────────────────────────────────
+  { token: "jpkg",   canonical: "J/kg",    factorToSi: 1,           dimension: dim(0, 2, -2, 0) },
+  { token: "kjpkg",  canonical: "kJ/kg",   factorToSi: 1e3,          dimension: dim(0, 2, -2, 0) },
+  { token: "mjpkg",  canonical: "MJ/kg",   factorToSi: 1e6,          dimension: dim(0, 2, -2, 0) },
+  { token: "whpkg",  canonical: "Wh/kg",   factorToSi: 3600,         dimension: dim(0, 2, -2, 0) },
+  { token: "kwhpkg", canonical: "kWh/kg",  factorToSi: 3_600_000,    dimension: dim(0, 2, -2, 0) },
+
+  // ── Thermal resistance — K·M⁻¹·L⁻²·T³ ───────────────────────────────
+  { token: "kpw",    canonical: "K/W",   factorToSi: 1, dimension: dim(-1, -2, 3, 0, 1) },
+  { token: "degcpw", canonical: "°C/W",  factorToSi: 1, dimension: dim(-1, -2, 3, 0, 1) },
+
+  // ── Thermal conductivity — M·L·T⁻³·K⁻¹ ──────────────────────────────
+  { token: "wpmk",  canonical: "W/(m·K)",  factorToSi: 1,    dimension: dim(1, 1, -3, 0, -1) },
+  { token: "mwpmk", canonical: "mW/(m·K)", factorToSi: 1e-3, dimension: dim(1, 1, -3, 0, -1) },
+  { token: "wpcmk", canonical: "W/(cm·K)", factorToSi: 100,  dimension: dim(1, 1, -3, 0, -1) },
+
+  // ── Specific heat capacity — L²·T⁻²·K⁻¹ ─────────────────────────────
+  { token: "jpkgk",  canonical: "J/(kg·K)",  factorToSi: 1,    dimension: dim(0, 2, -2, 0, -1) },
+  { token: "kjpkgk", canonical: "kJ/(kg·K)", factorToSi: 1e3,  dimension: dim(0, 2, -2, 0, -1) },
+
+  // ── Heat flux density — M·T⁻³ ────────────────────────────────────────
+  { token: "wpm2",  canonical: "W/m²",  factorToSi: 1,    dimension: dim(1, 0, -3, 0) },
+  { token: "kwpm2", canonical: "kW/m²", factorToSi: 1e3,  dimension: dim(1, 0, -3, 0) },
+  { token: "mwpm2", canonical: "mW/m²", factorToSi: 1e-3, dimension: dim(1, 0, -3, 0) },
+  { token: "wpcm2", canonical: "W/cm²", factorToSi: 1e4,  dimension: dim(1, 0, -3, 0) },
+
+  // ── Current density — I·L⁻² ──────────────────────────────────────────
+  { token: "apm2",   canonical: "A/m²",   factorToSi: 1,    dimension: dim(0, -2, 0, 1) },
+  { token: "kapm2",  canonical: "kA/m²",  factorToSi: 1e3,  dimension: dim(0, -2, 0, 1) },
+  { token: "apmm2",  canonical: "A/mm²",  factorToSi: 1e6,  dimension: dim(0, -2, 0, 1) },
+  { token: "mapmm2", canonical: "mA/mm²", factorToSi: 1e3,  dimension: dim(0, -2, 0, 1) },
+
+  // ── Electric field strength — M·L·T⁻³·I⁻¹ ───────────────────────────
+  { token: "vpm",  canonical: "V/m",  factorToSi: 1,    dimension: dim(1, 1, -3, -1) },
+  { token: "kvpm", canonical: "kV/m", factorToSi: 1e3,  dimension: dim(1, 1, -3, -1) },
+  { token: "mvpm", canonical: "mV/m", factorToSi: 1e-3, dimension: dim(1, 1, -3, -1) },
 ];
 
 export const UNIT_SPECS = new Map<string, UnitSpec>(
@@ -390,6 +459,8 @@ export const SCALABLE_UNIT_FAMILY = new Map<string, string>([
   ["nhry", "inductance"],
   // Frequency / power / energy
   ["hz", "frequency"],
+  ["radps", "frequency"],
+
   ["khz", "frequency"],
   ["mhz", "frequency"],
   ["ghz", "frequency"],
@@ -407,6 +478,62 @@ export const SCALABLE_UNIT_FAMILY = new Map<string, string>([
   ["degc", "temperature"],
   ["degf", "temperature"],
   ["rankine", "temperature"],
+
+  // angular velocity
+  ["rpm",    "angular_velocity"],
+  ["radps",  "angular_velocity"],
+  // angular acceleration
+  ["radps2", "angular_acceleration"],
+  ["degps2", "angular_acceleration"],
+  ["rpmps",  "angular_acceleration"],
+  // stiffness
+  ["npm",    "stiffness"],
+  ["knpm",   "stiffness"],
+  ["mnpm",   "stiffness"],
+  // mass flow
+  ["kgps",   "mass_flow"],
+  ["gps",    "mass_flow"],
+  ["kgpm",   "mass_flow"],
+  ["kgph",   "mass_flow"],
+  // moment of inertia
+  ["kgm2",   "moment_of_inertia"],
+  ["kgcm2",  "moment_of_inertia"],
+  ["gcm2",   "moment_of_inertia"],
+  // kinematic viscosity
+  ["m2ps",   "kinematic_viscosity"],
+  ["mm2ps",  "kinematic_viscosity"],
+  ["stk",    "kinematic_viscosity"],
+  ["cstk",   "kinematic_viscosity"],
+  // specific energy
+  ["jpkg",   "specific_energy"],
+  ["kjpkg",  "specific_energy"],
+  ["mjpkg",  "specific_energy"],
+  ["whpkg",  "specific_energy"],
+  ["kwhpkg", "specific_energy"],
+  // thermal resistance
+  ["kpw",    "thermal_resistance"],
+  ["degcpw", "thermal_resistance"],
+  // thermal conductivity
+  ["wpmk",   "thermal_conductivity"],
+  ["mwpmk",  "thermal_conductivity"],
+  ["wpcmk",  "thermal_conductivity"],
+  // specific heat
+  ["jpkgk",  "specific_heat"],
+  ["kjpkgk", "specific_heat"],
+  // heat flux
+  ["wpm2",   "heat_flux"],
+  ["kwpm2",  "heat_flux"],
+  ["mwpm2",  "heat_flux"],
+  ["wpcm2",  "heat_flux"],
+  // current density
+  ["apm2",   "current_density"],
+  ["kapm2",  "current_density"],
+  ["apmm2",  "current_density"],
+  ["mapmm2", "current_density"],
+  // electric field
+  ["vpm",    "electric_field"],
+  ["kvpm",   "electric_field"],
+  ["mvpm",   "electric_field"],  
 ]);
 
 export const UNIT_ALIASES = new Map<string, string>([
@@ -419,6 +546,7 @@ export const UNIT_ALIASES = new Map<string, string>([
   ["ppm", "ppm"],
   ["ppb", "ppb"],
   ["ppt", "ppt"],
+  ["%", "pct"],
   ["deg", "deg"],
   ["degree", "deg"],
   ["degrees", "deg"],
@@ -586,7 +714,13 @@ export const UNIT_ALIASES = new Map<string, string>([
   ["m/s^2", "mps2"],
   ["g0", "g0"],
   ["rpm", "rpm"],
+  ["radps", "radps"],
+  ["rad/s", "radps"],
+  ["rad per s", "radps"],
+  ["rad*s", "radps"],
   ["hz", "hz"],
+
+
   ["khz", "khz"],
   ["mhz", "mhz"],
   ["ghz", "ghz"],
@@ -762,6 +896,62 @@ export const UNIT_ALIASES = new Map<string, string>([
   ["fahrenheit", "degf"],
   ["rankine", "rankine"],
   ["r", "rankine"],
+
+// angular velocity (alternative spellings)
+  ["rad/s",        "radps"],
+  // angular acceleration
+  ["radps2",       "radps2"],  ["rad/s2",       "radps2"],  ["rad/s^2",      "radps2"],
+  ["degps2",       "degps2"],  ["deg/s2",       "degps2"],
+  ["rpmps",        "rpmps"],   ["rpm/s",        "rpmps"],
+  // stiffness
+  ["npm",          "npm"],     ["n/m",          "npm"],
+  ["knpm",         "knpm"],    ["kn/m",         "knpm"],
+  ["mnpm",         "mnpm"],    ["mn/m",         "mnpm"],
+  ["lbfpin",       "lbfpin"],  ["lbf/in",       "lbfpin"],
+  // mass flow
+  ["kgps",         "kgps"],    ["kg/s",         "kgps"],
+  ["gps",          "gps"],     ["g/s",          "gps"],
+  ["kgpm",         "kgpm"],    ["kg/min",       "kgpm"],
+  ["kgph",         "kgph"],    ["kg/h",         "kgph"],
+  // moment of inertia
+  ["kgm2",         "kgm2"],    ["kg*m2",        "kgm2"],    ["kg*m^2",       "kgm2"],
+  ["kgcm2",        "kgcm2"],   ["kg*cm2",       "kgcm2"],   ["kg*cm^2",      "kgcm2"],
+  ["gcm2",         "gcm2"],    ["g*cm2",        "gcm2"],
+  // kinematic viscosity
+  ["m2ps",         "m2ps"],    ["m2/s",         "m2ps"],    ["m^2/s",        "m2ps"],
+  ["mm2ps",        "mm2ps"],   ["mm2/s",        "mm2ps"],   ["mm^2/s",       "mm2ps"],
+  ["stk",          "stk"],     ["stokes",       "stk"],
+  ["cstk",         "cstk"],    ["cst",          "cstk"],    ["centistokes",  "cstk"],
+  // specific energy
+  ["jpkg",         "jpkg"],    ["j/kg",         "jpkg"],
+  ["kjpkg",        "kjpkg"],   ["kj/kg",        "kjpkg"],
+  ["mjpkg",        "mjpkg"],   ["mj/kg",        "mjpkg"],
+  ["whpkg",        "whpkg"],   ["wh/kg",        "whpkg"],
+  ["kwhpkg",       "kwhpkg"],  ["kwh/kg",       "kwhpkg"],
+  // thermal resistance
+  ["kpw",          "kpw"],     ["k/w",          "kpw"],
+  ["degcpw",       "degcpw"],  ["c/w",          "degcpw"],
+  // thermal conductivity
+  ["wpmk",         "wpmk"],    ["w/mk",         "wpmk"],    ["w/(m*k)",      "wpmk"],
+  ["mwpmk",        "mwpmk"],   ["mw/mk",        "mwpmk"],   ["mw/(m*k)",     "mwpmk"],
+  ["wpcmk",        "wpcmk"],   ["w/(cm*k)",     "wpcmk"],
+  // specific heat
+  ["jpkgk",        "jpkgk"],   ["j/kgk",        "jpkgk"],   ["j/(kg*k)",     "jpkgk"],
+  ["kjpkgk",       "kjpkgk"],  ["kj/kgk",       "kjpkgk"],  ["kj/(kg*k)",    "kjpkgk"],
+  // heat flux
+  ["wpm2",         "wpm2"],    ["w/m2",         "wpm2"],    ["w/m^2",        "wpm2"],
+  ["kwpm2",        "kwpm2"],   ["kw/m2",        "kwpm2"],
+  ["mwpm2",        "mwpm2"],   ["mw/m2",        "mwpm2"],
+  ["wpcm2",        "wpcm2"],   ["w/cm2",        "wpcm2"],
+  // current density
+  ["apm2",         "apm2"],    ["a/m2",         "apm2"],    ["a/m^2",        "apm2"],
+  ["kapm2",        "kapm2"],   ["ka/m2",        "kapm2"],
+  ["apmm2",        "apmm2"],   ["a/mm2",        "apmm2"],
+  ["mapmm2",       "mapmm2"],  ["ma/mm2",       "mapmm2"],
+  // electric field
+  ["vpm",          "vpm"],     ["v/m",          "vpm"],
+  ["kvpm",         "kvpm"],    ["kv/m",         "kvpm"],
+  ["mvpm",         "mvpm"],    ["mv/m",         "mvpm"],
 ]);
 
 export function normalizeUnitToken(rawUnit: string): string {

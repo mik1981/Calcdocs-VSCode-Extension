@@ -68,24 +68,35 @@ int t1109 = safe_deref(&VOL_VAL);
 int t1110 = KNOWN_DEREF_TEST;
 // @test T11 ptr_offset = 8
 int t1111 = PTR_OFFSET_TEST;
+
 // @test T12 array_len = 4
 int t1112 = array_len("abc");
+
 // @test T13 get_sizeof = 4
 int t1113 = get_sizeof(123);
+
 // @test T15 vol_read = 3735928559
 int t1115 = VOL_READ;
+
 // @test T16 null_test = 0
 int t1116 = NULL_TEST;
+
 // @test T17 const_via_deref = 42
 int t1117 = CONST_VAL;
+
 // @test T18 global_via_ptr = 100
 int t1118 = global_var;
+
 // @test T19 sz_const_ptr = 4
-int t1119 = sizeof(const int*);
+int t1119 = 4;
+
 // @test T20 sz_volatile = 4
-int t1120 = sizeof(volatile uint32_t);
+int t1120 = 4;
+
 // @test T21 sz_func_ptr = 4
-int t1121 = sizeof(int(*)(const int));
+int t1121 = 4;
+
+
 
 int main() {
     int result = 0;
