@@ -24,7 +24,7 @@ export type UnaryExpressionNode = {
 
 export type BinaryExpressionNode = {
   kind: "binary";
-  operator: "+" | "-" | "*" | "/";
+  operator: "+" | "-" | "*" | "/" | "%" | "^";
   left: ExpressionNode;
   right: ExpressionNode;
 };
@@ -35,21 +35,30 @@ export type CallExpressionNode = {
   args: ExpressionNode[];
 };
 
+export type IndexExpressionNode = {
+  kind: "index";
+  target: ExpressionNode;
+  index: ExpressionNode;
+};
+
 export type ExpressionNode =
   | NumberLiteralNode
   | StringLiteralNode
   | IdentifierNode
   | UnaryExpressionNode
   | BinaryExpressionNode
-  | CallExpressionNode;
+  | CallExpressionNode
+  | IndexExpressionNode;
 
 type Token =
   | { kind: "number"; value: string; position: number }
   | { kind: "identifier"; value: string; position: number }
   | { kind: "string"; value: string; raw: string; position: number }
-  | { kind: "operator"; value: "+" | "-" | "*" | "/"; position: number }
+  | { kind: "operator"; value: "+" | "-" | "*" | "/" | "%" | "^"; position: number }
   | { kind: "lparen"; position: number }
   | { kind: "rparen"; position: number }
+  | { kind: "lbracket"; position: number }
+  | { kind: "rbracket"; position: number }
   | { kind: "comma"; position: number }
   | { kind: "eof"; position: number };
 
@@ -96,7 +105,19 @@ function tokenize(source: string): Token[] {
       continue;
     }
 
-    if (char === "+" || char === "-" || char === "*" || char === "/") {
+    if (char === "[") {
+      tokens.push({ kind: "lbracket", position: cursor });
+      cursor += 1;
+      continue;
+    }
+
+    if (char === "]") {
+      tokens.push({ kind: "rbracket", position: cursor });
+      cursor += 1;
+      continue;
+    }
+
+    if (char === "+" || char === "-" || char === "*" || char === "/" || char === "%" || char === "^") {
       tokens.push({
         kind: "operator",
         value: char,
@@ -223,14 +244,40 @@ class ExpressionParser {
   }
 
   private parseMulDiv(): ExpressionNode {
-    let left = this.parseUnary();
+    let left = this.parsePower();
 
     while (
       this.match("operator", "*") ||
-      this.match("operator", "/")
+      this.match("operator", "/") ||
+      this.match("operator", "%")
     ) {
       const operator = this.previous();
-      const right = this.parseUnary();
+      const right = this.parsePower();
+
+      if (operator.kind !== "operator") {
+        throw new ExpressionSyntaxError(
+          operator.position,
+          "internal parser state error"
+        );
+      }
+
+      left = {
+        kind: "binary",
+        operator: operator.value,
+        left,
+        right,
+      };
+    }
+
+    return left;
+  }
+
+  private parsePower(): ExpressionNode {
+    let left = this.parseUnary();
+
+    if (this.match("operator", "^")) {
+      const operator = this.previous();
+      const right = this.parsePower();
 
       if (operator.kind !== "operator") {
         throw new ExpressionSyntaxError(
@@ -267,7 +314,23 @@ class ExpressionParser {
       };
     }
 
-    return this.parsePrimary();
+    return this.parsePostfix();
+  }
+
+  private parsePostfix(): ExpressionNode {
+    let expression = this.parsePrimary();
+
+    while (this.match("lbracket")) {
+      const index = this.parseAddSub();
+      this.expect("rbracket", "expected ']' after index expression");
+      expression = {
+        kind: "index",
+        target: expression,
+        index,
+      };
+    }
+
+    return expression;
   }
 
   private parsePrimary(): ExpressionNode {
@@ -406,14 +469,24 @@ export function parseExpression(source: string): ExpressionNode {
 
 function expressionPrecedence(expression: ExpressionNode): number {
   if (expression.kind === "binary") {
-    return expression.operator === "+" || expression.operator === "-" ? 1 : 2;
+    if (expression.operator === "+" || expression.operator === "-") {
+      return 1;
+    }
+    if (expression.operator === "^") {
+      return 3;
+    }
+    return 2;
   }
 
   if (expression.kind === "unary") {
-    return 3;
+    return 4;
   }
 
-  return 4;
+  if (expression.kind === "index") {
+    return 5;
+  }
+
+  return 6;
 }
 
 function needsRightParentheses(
@@ -473,6 +546,14 @@ export function printExpression(expression: ExpressionNode): string {
       const args = expression.args.map((arg) => printExpression(arg)).join(", ");
       return `${expression.callee}(${args})`;
     }
+    case "index": {
+      const target = printExpression(expression.target);
+      const targetText =
+        expression.target.kind === "binary" || expression.target.kind === "unary"
+          ? `(${target})`
+          : target;
+      return `${targetText}[${printExpression(expression.index)}]`;
+    }
   }
 }
 
@@ -499,11 +580,48 @@ export function collectIdentifiers(expression: ExpressionNode): Set<string> {
           walk(arg);
         }
         return;
+      case "index":
+        walk(node.target);
+        walk(node.index);
+        return;
     }
   };
 
   walk(expression);
   return identifiers;
+}
+
+export function collectFunctionCallees(expression: ExpressionNode): Set<string> {
+  const callees = new Set<string>();
+
+  const walk = (node: ExpressionNode): void => {
+    switch (node.kind) {
+      case "call":
+        callees.add(node.callee);
+        for (const arg of node.args) {
+          walk(arg);
+        }
+        return;
+      case "unary":
+        walk(node.argument);
+        return;
+      case "binary":
+        walk(node.left);
+        walk(node.right);
+        return;
+      case "index":
+        walk(node.target);
+        walk(node.index);
+        return;
+      case "identifier":
+      case "number":
+      case "string":
+        return;
+    }
+  };
+
+  walk(expression);
+  return callees;
 }
 
 export function mapExpression(
@@ -536,6 +654,13 @@ export function mapExpression(
         mapped = {
           ...node,
           args: node.args.map((arg) => visit(arg)),
+        };
+        break;
+      case "index":
+        mapped = {
+          ...node,
+          target: visit(node.target),
+          index: visit(node.index),
         };
         break;
     }

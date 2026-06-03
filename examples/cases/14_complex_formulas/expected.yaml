@@ -4,5 +4,9 @@ STAGE_DIFF: { value: 2.78, unit: A }
 STAGE_ADC: { value: 2.7647560975609755, unit: A }
 STAGE_COMP: { value: 0.0756045286148721, unit: A }
 MOTOR_RMS: { value: 0.9838367804449185, unit: A }
+OUT_INT_ABS_MOD: { value: 9, unit: 1 }
+
+
+
 
 

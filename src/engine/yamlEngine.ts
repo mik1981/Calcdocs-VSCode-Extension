@@ -1,6 +1,13 @@
 import type { CsvTableMap } from "../core/csvTables";
-import { getYamlTopLevelLine } from "../core/yamlParser";
 import {
+  getYamlTopLevelLine,
+  normalizeFormulaYamlNode,
+  parseFormulaYamlValue,
+  type FormulaToleranceRange,
+  type FormulaToleranceSpec,
+} from "../core/formulaYaml";
+import {
+  collectFunctionCallees,
   collectIdentifiers,
   parseExpression,
   printExpression,
@@ -17,6 +24,7 @@ import {
 } from "./evaluator";
 import {
   applyOutputUnit,
+  createDimensionlessQuantity,
   createQuantity,
   createQuantityFromData,
   dimensionsEqual,
@@ -32,8 +40,10 @@ import {
   UNIT_SPEC_LIST,
   UNIT_SPECS,
 } from "./units";
+import type { TolMode } from "../types/FormulaEntry";
 
 export type YamlSymbolType = "const" | "expr" | "lookup";
+
 export type DiagnosticSeverity = "error" | "warning" | "info";
 
 export type YamlEvaluationDiagnostic = {
@@ -57,9 +67,12 @@ type ParsedSymbol = {
   expression?: string;
   ast?: ExpressionNode;
   literalValue?: number;
+  literalValues?: number[];
   declaredUnit?: string;
   effectiveUnit?: string;
   yamlValue?: number;
+  parameters: string[];
+  tolerance?: FormulaToleranceSpec;
   dependencies: string[];
   parseError?: string;
 };
@@ -77,6 +90,19 @@ export type EvaluatedYamlSymbol = {
   value?: number;
   outputUnit?: string;
   yamlValue?: number;
+  range?: {
+    min: number;
+    max: number;
+    source: "declared" | "propagated";
+    /** Original percentage tolerance (e.g. 5 for ±5 %).
+     *  Present only when the range was derived from a `tol` field;
+     *  absent for explicit min/max or propagated ranges. */
+    tol?: number;
+    nominalValue?: number;
+    mode?: TolMode;
+    sigma?: number;
+  };
+
   errors: string[];
   warnings: string[];
   isParameterized?: boolean;
@@ -187,7 +213,8 @@ function inferSymbolType(node: Record<string, unknown>): YamlSymbolType | null {
     return "lookup";
   }
 
-  if (toNumericValue(node.value) != null) {
+  const parsedValue = parseFormulaYamlValue(node.value);
+  if (parsedValue.value != null || parsedValue.values != null) {
     return "const";
   }
 
@@ -273,6 +300,42 @@ function formatResolvedDependency(
   }
 
   return undefined;
+}
+
+type NumericRange = {
+  min: number;
+  max: number;
+};
+
+function normalizeToleranceRange(
+  range: FormulaToleranceRange | undefined,
+  nominal?: number
+): NumericRange | undefined {
+  if (!range) {
+    return undefined;
+  }
+
+  let min = range.min;
+  let max = range.max;
+
+  if ((min === undefined || max === undefined) && range.tol !== undefined && nominal !== undefined) {
+    const delta = Math.abs(nominal) * Math.abs(range.tol) / 100;
+    min ??= nominal - delta;
+    max ??= nominal + delta;
+  }
+
+  if (min === undefined || max === undefined) {
+    return undefined;
+  }
+
+  return min <= max ? { min, max } : { min: max, max: min };
+}
+
+function getToleranceParameterRange(
+  tolerance: FormulaToleranceSpec | undefined,
+  name: string
+): FormulaToleranceRange | undefined {
+  return tolerance?.parameters[name];
 }
 
 function expressionNeedsOutputConversion(ast: ExpressionNode | undefined): boolean {
@@ -401,20 +464,14 @@ function parseSymbols(
     const node = rawNode as Record<string, unknown>;
     const type = inferSymbolType(node);
     const line = Math.max(0, getYamlTopLevelLine(options.rawText, name));
-    
-    let yamlValue = toNumericValue(node.value);
-    let unitFromValue: string | undefined;
-    
-    if (yamlValue == null && typeof node.value === "string") {
-      const match = node.value.trim().match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-z%][A-Za-z0-9_%]*)$/);
-      if (match) {
-        yamlValue = Number(match[1]);
-        unitFromValue = match[2];
-      }
-    }
-
-    const declaredUnit = typeof node.unit === "string" ? node.unit.trim() : unitFromValue;
+    const normalizedNode = normalizeFormulaYamlNode(name, node, options.rawText, options.yamlPath);
+    const parsedValue = parseFormulaYamlValue(node.value);
+    const yamlValue = parsedValue.value;
+    const yamlValues = parsedValue.values;
+    const declaredUnit = normalizedNode.unit;
     const effectiveUnit = declaredUnit || externalUnits.get(name);
+    const parameters = normalizedNode.parameters ?? [];
+    const tolerance = normalizedNode.tolerance;
 
     if (!type) {
       createDiagnostic(
@@ -432,6 +489,8 @@ function parseSymbols(
         declaredUnit,
         effectiveUnit,
         yamlValue,
+        parameters,
+        tolerance,
         dependencies: [],
         parseError: "unknown symbol type",
       });
@@ -439,7 +498,7 @@ function parseSymbols(
     }
 
     if (type === "const") {
-      if (yamlValue == null) {
+      if (yamlValue == null && yamlValues == null) {
         createDiagnostic(
           diagnostics,
           name,
@@ -455,17 +514,19 @@ function parseSymbols(
         type,
         rawNode: node,
         literalValue: yamlValue ?? undefined,
+        literalValues: yamlValues,
         declaredUnit,
         effectiveUnit,
         yamlValue: yamlValue ?? undefined,
+        parameters,
+        tolerance,
         dependencies: [],
       });
       continue;
     }
 
     const expression =
-      (typeof node.expr === "string" ? node.expr : undefined) ??
-      (typeof node.formula === "string" ? node.formula : undefined) ??
+      (normalizedNode.expr ? normalizedNode.expr : undefined) ??
       (type === "lookup" ? buildLookupExpression(node) ?? undefined : undefined);
 
     if (!expression) {
@@ -484,6 +545,8 @@ function parseSymbols(
         declaredUnit,
         effectiveUnit,
         yamlValue,
+        parameters,
+        tolerance,
         dependencies: [],
         parseError: "missing expression",
       });
@@ -492,7 +555,15 @@ function parseSymbols(
 
     try {
       const ast = parseExpression(preprocessExpression(expression));
-      const dependencies = Array.from(collectIdentifiers(ast)).sort();
+      const dependencySet = collectIdentifiers(ast);
+      for (const callee of collectFunctionCallees(ast)) {
+        if (root[callee] != null) {
+          dependencySet.add(callee);
+        }
+      }
+      const dependencies = Array.from(dependencySet)
+        .filter((dependency) => !parameters.includes(dependency))
+        .sort();
 
       parsed.set(name, {
         name,
@@ -504,6 +575,8 @@ function parseSymbols(
         declaredUnit,
         effectiveUnit,
         yamlValue,
+        parameters,
+        tolerance,
         dependencies,
       });
     } catch (error) {
@@ -524,6 +597,8 @@ function parseSymbols(
         declaredUnit,
         effectiveUnit,
         yamlValue,
+        parameters,
+        tolerance,
         dependencies: [],
         parseError: message,
       });
@@ -636,6 +711,34 @@ export function evaluateYamlDocument(
 
   const evaluated = new Map<string, EvaluatedYamlSymbol>();
   const evaluating = new Set<string>();
+  const createYamlDataQuantity = (
+    value: number,
+    unit?: string
+  ): ReturnType<typeof createQuantity> => {
+    if (!unit) {
+      return createQuantity(value);
+    }
+
+    const spec = getUnitSpec(unit);
+    if (spec && (spec.toSi || spec.fromSi)) {
+      if (!Number.isFinite(value)) {
+        return {
+          ok: false,
+          error: `non-finite numeric value: ${value}`,
+        };
+      }
+
+      return {
+        ok: true,
+        value: {
+          ...createDimensionlessQuantity(value),
+          displayUnit: spec.canonical,
+        },
+      };
+    }
+
+    return createQuantityFromData(value, unit);
+  };
 
   const resolveExternalQuantity = (name: string): Quantity | undefined => {
     const value = externalValues.get(name);
@@ -644,14 +747,38 @@ export function evaluateYamlDocument(
     }
 
     const unit = externalUnits.get(name);
-    const quantity = unit
-      ? createQuantityFromData(value, unit)
-      : createQuantity(value);
-    if (!quantity.ok) {
+    if (unit) {
+      const qty = createYamlDataQuantity(value, unit);
+      if (!qty.ok) return undefined;
+      return qty.value;
+    } else {
+      const qty = createQuantity(value);
+      if (!qty.ok) return undefined;
+      return qty.value;
+    }
+  };
+
+  const createDataQuantity = (value: number, unit?: string): Quantity | undefined => {
+    const quantity = createYamlDataQuantity(value, unit);
+    return quantity.ok ? quantity.value : undefined;
+  };
+
+  const resolveArrayQuantities = (name: string): Quantity[] | undefined => {
+    const symbol = symbols.get(name);
+    if (!symbol?.literalValues) {
       return undefined;
     }
 
-    return quantity.value;
+    const quantities: Quantity[] = [];
+    for (const value of symbol.literalValues) {
+      const quantity = createDataQuantity(value, symbol.effectiveUnit);
+      if (!quantity) {
+        return undefined;
+      }
+      quantities.push(quantity);
+    }
+
+    return quantities;
   };
 
   const evaluateSymbol = (name: string): EvaluatedYamlSymbol | undefined => {
@@ -707,30 +834,77 @@ export function evaluateYamlDocument(
     evaluating.add(name);
 
     if (symbol.type === "const") {
+      if (symbol.literalValues) {
+        if (symbol.literalValues.length === 0) {
+          addError(`const '${name}' has an empty value table`);
+        }
+        result.expanded = `[${symbol.literalValues.map(formatExplainNumber).join(", ")}]`;
+        result.explainSteps = [`= ${result.expanded}`];
+        result.outputUnit = symbol.effectiveUnit;
+        evaluating.delete(name);
+        return result;
+      }
+
       if (typeof symbol.literalValue !== "number" || !Number.isFinite(symbol.literalValue)) {
         addError(`const '${name}' has invalid numeric value`);
         evaluating.delete(name);
         return result;
       }
 
-      const quantity = symbol.effectiveUnit
-        ? createQuantityFromData(symbol.literalValue, symbol.effectiveUnit)
-        : createQuantity(symbol.literalValue);
-      if (!quantity.ok) {
-        addError(quantity.error);
-        evaluating.delete(name);
-        return result;
+      let constQuantity: Quantity;
+      if (symbol.effectiveUnit) {
+        const spec = getUnitSpec(symbol.effectiveUnit);
+        if (spec && (spec.toSi || spec.fromSi)) {
+          // Unità con offset (degC, degF, rankine).
+          // Il valore dichiarato viene usato as-is nelle formule.
+          // Non eseguiamo la conversione in SI perché le formule YAML
+          // operano su valori utente (25°C), non su Kelvin assoluti.
+          constQuantity = {
+            valueSi: symbol.literalValue,
+            dimension: createDimensionlessQuantity(symbol.literalValue).dimension,
+            preferredUnit: undefined,   // evita che toDisplayValue chiami fromSi
+            displayUnit: spec.canonical,
+          };
+        } else {
+          const qty = createQuantityFromData(symbol.literalValue, symbol.effectiveUnit);
+          if (!qty.ok) {
+            addError(qty.error);
+            evaluating.delete(name);
+            return result;
+          }
+          constQuantity = qty.value;
+        }
+      } else {
+        const qty = createQuantity(symbol.literalValue);
+        if (!qty.ok) {
+          addError(qty.error);
+          evaluating.delete(name);
+          return result;
+        }
+        constQuantity = qty.value;
       }
 
-      result.quantity = quantity.value;
-      result.value = toDisplayValue(quantity.value);
+      result.quantity = constQuantity;
+      result.value = toDisplayValue(constQuantity);   // restituisce 25 ✓
+      
+      const declaredRange = normalizeToleranceRange(symbol.tolerance, result.value);
+      if (declaredRange) {
+        result.range = {
+          ...declaredRange,
+          source: "declared",
+          tol: symbol.tolerance?.tol,
+          nominalValue: result.value,
+          mode: symbol.tolerance?.mode,
+          sigma: symbol.tolerance?.sigma,
+        };
+      }
       // result.outputUnit = toDisplayUnit(quantity.value);
       // toDisplayUnit restituisce la dimensione grezza ("M^1 L^2 T^-3") quando
       // non c'è un'unità preferita. Proviamo a trovare l'unità canonica.
-      const rawUnit = toDisplayUnit(quantity.value);
+      const rawUnit = toDisplayUnit(constQuantity);
       const isRawDimension = rawUnit != null && /^[MLTIK]/.test(rawUnit);
       result.outputUnit = isRawDimension || rawUnit == null
-        ? inferCanonicalUnit(quantity.value)
+        ? inferCanonicalUnit(constQuantity)
         : rawUnit;
 
 
@@ -772,11 +946,15 @@ export function evaluateYamlDocument(
       (dep) => !symbols.has(dep) && !externalUnits.has(dep) && !externalValues.has(dep)
     );
 
-    result.isParameterized = hasUnknownVariables;
+    result.isParameterized = hasUnknownVariables || symbol.parameters.length > 0;
 
     const context: EvaluationContext = {
       ignoreUnitCompatibility: hasUnknownVariables,
       resolveIdentifier: (identifier: string): Quantity | undefined => {
+        if (symbol.parameters.includes(identifier)) {
+          return createDimensionlessQuantity(1.0);
+        }
+
         // 1. Prova a risolvere dai simboli YAML già valutati o in corso di valutazione
         if (symbols.has(identifier)) {
           const dependency = evaluateSymbol(identifier);
@@ -787,7 +965,7 @@ export function evaluateYamlDocument(
           // restituiamo una quantità con valore 1.0 ma dimensione corretta.
           const declaredUnit = symbols.get(identifier)?.effectiveUnit;
           if (declaredUnit) {
-            const q = createQuantity(1.0, declaredUnit);
+            const q = createYamlDataQuantity(1.0, declaredUnit);
             if (q.ok) return q.value;
           }
         }
@@ -797,7 +975,7 @@ export function evaluateYamlDocument(
         const extUnit = externalUnits.get(identifier);
         
         if (extUnit) {
-          const q = createQuantityFromData(extValue ?? 1.0, extUnit);
+          const q = createYamlDataQuantity(extValue ?? 1.0, extUnit);
           if (q.ok) return q.value;
         }
 
@@ -807,6 +985,105 @@ export function evaluateYamlDocument(
         }
 
         return undefined;
+      },
+      resolveArrayIdentifier: resolveArrayQuantities,
+      resolveFunctionCall: (functionName, args) => {
+        const target = symbols.get(functionName);
+        if (!target) {
+          return undefined;
+        }
+
+        if (!target.ast || !target.expression) {
+          return {
+            ok: false,
+            error: `formula '${functionName}' is not callable`,
+          };
+        }
+
+        if (args.length !== target.parameters.length) {
+          return {
+            ok: false,
+            error: `formula '${functionName}' expects ${target.parameters.length} parameter(s), got ${args.length}`,
+          };
+        }
+
+        if (evaluating.has(functionName)) {
+          return {
+            ok: false,
+            error: `recursive formula call detected for '${functionName}'`,
+          };
+        }
+
+        const boundParameters = new Map<string, Quantity>();
+        target.parameters.forEach((parameter, index) => {
+          boundParameters.set(parameter, args[index]);
+        });
+
+        evaluating.add(functionName);
+        const callContext: EvaluationContext = {
+          ignoreUnitCompatibility: false,
+          resolveIdentifier: (identifier: string): Quantity | undefined => {
+            const bound = boundParameters.get(identifier);
+            if (bound) {
+              return bound;
+            }
+
+            if (symbols.has(identifier)) {
+              const dependency = evaluateSymbol(identifier);
+              if (dependency?.quantity) {
+                return dependency.quantity;
+              }
+
+              const declaredUnit = symbols.get(identifier)?.effectiveUnit;
+              if (declaredUnit) {
+                const q = createYamlDataQuantity(1.0, declaredUnit);
+                if (q.ok) return q.value;
+              }
+            }
+
+            return resolveExternalQuantity(identifier);
+          },
+          resolveArrayIdentifier: resolveArrayQuantities,
+          resolveLookup: (lookupName, lookupArgs) => csvLookup(lookupName, lookupArgs),
+          resolveFunctionCall: (nestedName, nestedArgs) =>
+            context.resolveFunctionCall?.(nestedName, nestedArgs),
+        };
+
+        const evaluatedCall = evaluateExpressionAst(target.ast, callContext);
+        evaluating.delete(functionName);
+        if (!evaluatedCall.ok) {
+          return {
+            ok: false,
+            error: evaluatedCall.error,
+          };
+        }
+
+        let callQuantity = evaluatedCall.quantity;
+        if (target.effectiveUnit) {
+          const output = applyOutputUnit(callQuantity, target.effectiveUnit);
+          if (output.ok) {
+            callQuantity = output.value.quantity;
+          } else if (isDimensionless(callQuantity.dimension)) {
+            const tagged = createYamlDataQuantity(callQuantity.valueSi, target.effectiveUnit);
+            if (!tagged.ok) {
+              return {
+                ok: false,
+                error: tagged.error,
+              };
+            }
+            callQuantity = tagged.value;
+          } else {
+            return {
+              ok: false,
+              error: output.error,
+            };
+          }
+        }
+
+        return {
+          ok: true,
+          value: callQuantity,
+        };
       },
       resolveLookup: (functionName, args) => csvLookup(functionName, args),
     };
@@ -852,7 +1129,7 @@ export function evaluateYamlDocument(
         result.outputUnit = toDisplayUnit(quantity);
       } else {
         if (isRawDimensionless) {
-          const tagged = createQuantityFromData(
+          const tagged = createYamlDataQuantity(
             quantity.valueSi,
             outputUnit
           );
@@ -868,36 +1145,266 @@ export function evaluateYamlDocument(
           result.quantity = quantity;
           result.value = toDisplayValue(quantity);
           result.outputUnit = toDisplayUnit(quantity);
-
-          evaluating.delete(name);
-          return result;
         }
-        
-        const shouldConvertOutput =
-          expressionNeedsOutputConversion(symbol.ast) ||
-          shouldConvertPureExpressionOutput(quantity, outputSpec);
-        if (shouldConvertOutput) {
-          const output = applyOutputUnit(quantity, outputUnit);
-          if (!output.ok) {
-            addError(output.error);
-            evaluating.delete(name);
-            return result;
-          }
+        else {
+          const shouldConvertOutput =
+            expressionNeedsOutputConversion(symbol.ast) ||
+            shouldConvertPureExpressionOutput(quantity, outputSpec);
+          if (shouldConvertOutput) {
+            const output = applyOutputUnit(quantity, outputUnit);
+            if (!output.ok) {
+              addError(output.error);
+              evaluating.delete(name);
+              return result;
+            }
 
-          quantity = output.value.quantity;
-          result.value = output.value.displayValue;
-          result.outputUnit = output.value.displayUnit;
-          result.quantity = quantity;
-        } else {
-          result.quantity = quantity;
-          result.value = toDisplayValue(quantity);
-          result.outputUnit = toDisplayUnit(quantity);
+            quantity = output.value.quantity;
+            result.value = output.value.displayValue;
+            result.outputUnit = output.value.displayUnit;
+            result.quantity = quantity;
+          } else {
+            result.quantity = quantity;
+            result.value = toDisplayValue(quantity);
+            result.outputUnit = toDisplayUnit(quantity);
+          }
         }
       }
     } else {
       result.quantity = quantity;
       result.value = toDisplayValue(quantity);
       result.outputUnit = toDisplayUnit(quantity);
+    }
+
+    const declaredRange = normalizeToleranceRange(symbol.tolerance, result.value);
+    if (declaredRange) {
+      result.range = {
+        ...declaredRange,
+        source: "declared",
+        tol: symbol.tolerance?.tol,
+        nominalValue: result.value,
+        mode: symbol.tolerance?.mode,
+        sigma: symbol.tolerance?.sigma,
+      };
+    } else if (symbol.ast) {
+      const tolMode: TolMode = symbol.tolerance?.mode ?? "worst_case";
+      const tolSigma: number = symbol.tolerance?.sigma ?? 3;
+
+      const rangeInputs = new Map<string, { min: Quantity; max: Quantity }>();
+
+
+      const addRangeInput = (
+        dependencyName: string,
+        range: NumericRange | undefined,
+        unit?: string
+      ): void => {
+        if (!range) {
+          return;
+        }
+
+        const minQuantity = createDataQuantity(range.min, unit);
+        const maxQuantity = createDataQuantity(range.max, unit);
+        if (minQuantity && maxQuantity) {
+          rangeInputs.set(dependencyName, {
+            min: minQuantity,
+            max: maxQuantity,
+          });
+        }
+      };
+
+      for (const parameter of symbol.parameters) {
+        addRangeInput(
+          parameter,
+          normalizeToleranceRange(getToleranceParameterRange(symbol.tolerance, parameter), 1)
+        );
+      }
+
+      for (const dependencyName of symbol.dependencies) {
+        const dependency = symbols.has(dependencyName)
+          ? evaluateSymbol(dependencyName)
+          : undefined;
+        const explicitRange = normalizeToleranceRange(
+          getToleranceParameterRange(symbol.tolerance, dependencyName),
+          dependency?.value ?? externalValues.get(dependencyName)
+        );
+
+        if (explicitRange) {
+          addRangeInput(
+            dependencyName,
+            explicitRange,
+            dependency?.outputUnit ?? externalUnits.get(dependencyName)
+          );
+          continue;
+        }
+
+        if (dependency?.range) {
+          addRangeInput(dependencyName, dependency.range, dependency.outputUnit);
+        }
+      }
+
+      // Per ogni dipendenza array con tol, costruiamo una variazione
+      // "tutti min" / "tutti max" da aggiungere al corner-case sweep.
+      type ArrayTolEntry = { tol: number; baseQuantities: Quantity[] };
+      const arrayTolInputs = new Map<string, ArrayTolEntry>();
+
+      for (const dependencyName of symbol.dependencies) {
+        const dep = symbols.get(dependencyName);
+        if (!dep?.literalValues || dep.literalValues.length === 0) continue;
+        if (dep.tolerance?.tol === undefined) continue;
+
+        const base: Quantity[] = [];
+        let allOk = true;
+        for (const v of dep.literalValues) {
+          const q = createDataQuantity(v, dep.effectiveUnit);
+          if (!q) { allOk = false; break; }
+          base.push(q);
+        }
+        if (allOk && base.length > 0) {
+          arrayTolInputs.set(dependencyName, {
+            tol: Math.abs(dep.tolerance.tol) / 100,
+            baseQuantities: base,
+          });
+        }
+      }
+
+      const scalarEntries = Array.from(rangeInputs.entries());
+      const arrayEntries  = Array.from(arrayTolInputs.entries());
+      const totalInputs   = scalarEntries.length + arrayEntries.length;
+
+      if (totalInputs > 0 && totalInputs <= 12) {
+
+        // Funzione che valuta l'espressione dati i valori numerici degli input.
+        // overrideValues[i] = valore display numerico per scalarEntries[i]
+        // arrayFactors[i]   = moltiplicatore per arrayEntries[i] (1 ± tol)
+        const evalAtPoint = (
+          overrideValues: number[],
+          arrayFactors: number[]
+        ): number | undefined => {
+          const overrideMap    = new Map<string, Quantity>();
+          const arrayOverrideMap = new Map<string, Quantity[]>();
+
+          scalarEntries.forEach(([name, range], i) => {
+            const v    = overrideValues[i];
+            const unit = range.min.displayUnit ?? range.min.preferredUnit;
+            const q    = unit ? createQuantityFromData(v, unit) : createQuantity(v);
+            if (q.ok) overrideMap.set(name, q.value);
+            else {
+              const qs = createQuantity(v);
+              if (qs.ok) overrideMap.set(name, qs.value);
+            }
+          });
+
+          arrayEntries.forEach(([name, { baseQuantities }], i) => {
+            const factor = arrayFactors[i];
+            arrayOverrideMap.set(
+              name,
+              baseQuantities.map(q => ({ ...q, valueSi: q.valueSi * factor }))
+            );
+          });
+
+          const rangeContext: EvaluationContext = {
+            ...context,
+            resolveIdentifier: (id) =>
+              overrideMap.get(id) ?? context.resolveIdentifier(id),
+            resolveArrayIdentifier: arrayOverrideMap.size > 0
+              ? (name) => arrayOverrideMap.get(name) ?? context.resolveArrayIdentifier?.(name)
+              : context.resolveArrayIdentifier,
+          };
+
+          const ev = evaluateExpressionAst(symbol.ast!, rangeContext);
+          if (!ev.ok) return undefined;
+
+          let q = ev.quantity;
+          if (symbol.effectiveUnit) {
+            const out = applyOutputUnit(q, symbol.effectiveUnit);
+            if (out.ok) return out.value.displayValue;
+          }
+          return toDisplayValue(q);
+        };
+
+        // Valori nominali degli scalari (centro del range)
+        const nominalScalars = scalarEntries.map(([, range]) =>
+          (toDisplayValue(range.min) + toDisplayValue(range.max)) / 2
+        );
+        const nominalArrayFactors = arrayEntries.map(() => 1.0);
+
+        if (tolMode === "worst_case") {
+          const values: number[] = [];
+          const combinations = 1 << totalInputs;
+          for (let mask = 0; mask < combinations; mask++) {
+            const sv = scalarEntries.map(([, range], i) =>
+              (mask & (1 << i)) === 0
+                ? toDisplayValue(range.min)
+                : toDisplayValue(range.max)
+            );
+            const af = arrayEntries.map(([, { tol }], i) =>
+              (mask & (1 << (i + scalarEntries.length))) === 0
+                ? (1 - tol)
+                : (1 + tol)
+            );
+            const v = evalAtPoint(sv, af);
+            if (v !== undefined && Number.isFinite(v)) values.push(v);
+          }
+          if (values.length > 0) {
+            result.range = {
+              min: Math.min(...values),
+              max: Math.max(...values),
+              source: "propagated",
+              nominalValue: result.value,
+              mode: tolMode,
+              sigma: tolSigma,
+            };
+          }
+
+        } else {
+          // RSS e gaussian: differenze finite centrate
+          let sumSq = 0;
+          const nominal = result.value ?? evalAtPoint(nominalScalars, nominalArrayFactors) ?? 0;
+
+          // Sensibilità scalari
+          for (let i = 0; i < scalarEntries.length; i++) {
+            const [, range] = scalarEntries[i];
+            const halfSpan = (toDisplayValue(range.max) - toDisplayValue(range.min)) / 2;
+            if (halfSpan <= 0) continue;
+
+            const svPlus  = [...nominalScalars]; svPlus[i]  = nominalScalars[i] + halfSpan;
+            const svMinus = [...nominalScalars]; svMinus[i] = nominalScalars[i] - halfSpan;
+
+            const fPlus  = evalAtPoint(svPlus,  nominalArrayFactors);
+            const fMinus = evalAtPoint(svMinus, nominalArrayFactors);
+            if (fPlus === undefined || fMinus === undefined) continue;
+
+            const sensitivity = (fPlus - fMinus) / 2;
+            sumSq += sensitivity * sensitivity;
+          }
+
+          // Sensibilità array
+          for (let i = 0; i < arrayEntries.length; i++) {
+            const [, { tol }] = arrayEntries[i];
+            const afPlus  = [...nominalArrayFactors]; afPlus[i]  = 1 + tol;
+            const afMinus = [...nominalArrayFactors]; afMinus[i] = 1 - tol;
+
+            const fPlus  = evalAtPoint(nominalScalars, afPlus);
+            const fMinus = evalAtPoint(nominalScalars, afMinus);
+            if (fPlus === undefined || fMinus === undefined) continue;
+
+            const sensitivity = (fPlus - fMinus) / 2;
+            sumSq += sensitivity * sensitivity;
+          }
+
+          if (sumSq > 0) {
+            const sigmaOut = Math.sqrt(sumSq);
+            const nsigma   = tolMode === "gaussian" ? tolSigma : 1;
+            result.range = {
+              min: nominal - nsigma * sigmaOut,
+              max: nominal + nsigma * sigmaOut,
+              source: "propagated",
+              nominalValue: nominal,
+              mode: tolMode,
+              sigma: tolSigma,
+            };
+          }
+        }
+      }
     }
 
     const substituted = substituteIdentifiersForExplain(

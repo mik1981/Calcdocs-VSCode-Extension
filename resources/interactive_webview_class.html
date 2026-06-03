@@ -551,6 +551,13 @@ pre.codeblock {
   opacity: 0.6;
 }
 .node-card.collapsed + .node-children { display: none; }
+.inline-child-params {
+  margin: 0;
+  padding: 4px 0 2px 10px;
+  border-left: 2px solid var(--vscode-widget-border);
+  display: none;
+}
+.inline-child-params.open { display: block; }
 
 /* ─── Params table ──────────────────────────────────────────────────────────── */
 .params-table {
@@ -673,6 +680,17 @@ pre.codeblock {
 
 .param-messages { grid-column: 1 / -1; }
 
+.range-badge {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(86,156,214,0.08);
+  color: var(--vscode-descriptionForeground);
+  font-weight:700;
+  margin-left:6px;
+}
+.range-text { font-size:0.78rem; color:var(--vscode-descriptionForeground); margin-top:2px; }
+
 @media (max-width: 600px) {
   .param-row { grid-template-columns: 1fr; }
   .params-header { display: none; }
@@ -746,6 +764,138 @@ pre.codeblock {
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground); }
+
+/* ─── Tolerance / range visualizer ─────────────────────────────────────────── */
+.tol-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px 8px;
+  border-left: 3px solid var(--vscode-focusBorder, #007acc);
+  border-radius: 0 6px 6px 0;
+  background: rgba(128,128,128,0.04);
+  border-top: 1px solid var(--vscode-widget-border);
+  border-right: 1px solid var(--vscode-widget-border);
+  border-bottom: 1px solid var(--vscode-widget-border);
+  margin-top: 6px;
+}
+.tol-widget.tight    { border-left-color: #4caf7d; }
+.tol-widget.moderate { border-left-color: #c88b3a; }
+.tol-widget.loose    { border-left-color: var(--vscode-errorForeground, #d4606a); }
+
+.tol-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.tol-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground);
+}
+.tol-source-tag {
+  font-size: 0.64rem;
+  font-style: italic;
+  opacity: 0.65;
+}
+.tol-perc {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: var(--vscode-editor-font-family, Consolas, monospace);
+  padding: 1px 7px;
+  border-radius: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tol-perc.tight    { background: rgba(76,175,125,0.20);  color: #4caf7d; }
+.tol-perc.moderate { background: rgba(209,154,102,0.20); color: #c88b3a; }
+.tol-perc.loose    { background: rgba(212,96,106,0.20);  color: var(--vscode-errorForeground, #d4606a); }
+
+.tol-bar-wrap {
+  position: relative;
+  height: 6px;
+  background: rgba(128,128,128,0.15);
+  border-radius: 3px;
+  overflow: visible;
+}
+.tol-bar-fill {
+  position: absolute;
+  top: 0; bottom: 0;
+  border-radius: 3px;
+}
+.tol-bar-fill.tight    { background: linear-gradient(90deg, rgba(76,175,125,0.25),  rgba(76,175,125,0.65)); }
+.tol-bar-fill.moderate { background: linear-gradient(90deg, rgba(209,154,102,0.25), rgba(209,154,102,0.65)); }
+.tol-bar-fill.loose    { background: linear-gradient(90deg, rgba(212,96,106,0.25),  rgba(212,96,106,0.65)); }
+.tol-bar-marker {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 14px;
+  background: var(--vscode-editor-foreground, #ccc);
+  border-radius: 1px;
+  transform: translateX(-50%);
+  box-shadow: 0 0 4px rgba(0,0,0,0.45);
+}
+.tol-minmax-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--vscode-editor-font-family, Consolas, monospace);
+  font-size: 0.70rem;
+  color: var(--vscode-descriptionForeground);
+}
+.tol-lim { display: flex; flex-direction: column; gap: 1px; }
+.tol-lim-label { font-size: 0.60rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.60; }
+.tol-lim-val { font-weight: 700; }
+
+/* Compact inline tolerance (param rows & step rows) */
+.tol-compact {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  font-family: var(--vscode-editor-font-family, Consolas, monospace);
+  padding: 2px 0;
+  flex-wrap: wrap;
+}
+.tol-compact .tol-bar-wrap   { width: 52px; height: 4px; flex-shrink: 0; }
+.tol-compact .tol-bar-marker { height: 8px; top: -2px; }
+
+/* Input tolerance section (Evaluation steps) */
+.itol-section {
+  margin-top: 5px;
+  padding: 4px 8px;
+  background: rgba(128,128,128,0.04);
+  border-left: 2px solid var(--vscode-widget-border);
+  border-radius: 0 4px 4px 0;
+}
+.itol-section-title {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 3px;
+}
+.itol-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border-top: 1px solid rgba(128,128,128,0.08);
+  font-size: 0.75rem;
+}
+.itol-row:first-of-type { border-top: none; }
+.itol-name {
+  font-weight: 600;
+  font-family: var(--vscode-editor-font-family, Consolas, monospace);
+  min-width: 100px;
+  white-space: nowrap;
+}
+.itol-val  { /* uses .tol-perc for color */ }
+.itol-src  { font-size: 0.64rem; opacity: 0.60; font-style: italic; }
 </style>
 </head>
 <body>
@@ -837,19 +987,107 @@ function esc(v) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function fmt(v) {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
-  const a = Math.abs(v);
-  if (a === 0) return "0";
-  if (a >= 1e6 || (a > 0 && a < 1e-4)) return v.toExponential(4);
-  if (a >= 100) return parseFloat(v.toPrecision(7)).toString();
-  return parseFloat(v.toPrecision(8)).toString();
+function formatNumberToSigFigs(value, sigFigs = 6) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  if (value === 0) return "0";
+  const a = Math.abs(value);
+  if (a >= 1e15 || (a > 0 && a < 1e-9)) return value.toExponential(sigFigs - 1);
+  return parseFloat(value.toPrecision(sigFigs)).toString();
 }
+function fmt(v) { return formatNumberToSigFigs(v, 6); }
 
 function fmtUnit(v, u) {
   const f = fmt(v);
   return u ? `${f} ${u}` : f;
 }
+
+/* Compute tolerance data from a range object + nominal value */
+function _computeTol(range, nominal) {
+  const min = range.min, max = range.max;
+  const hasNominal = typeof nominal === 'number' && Number.isFinite(nominal) && nominal !== 0;
+  const ref    = hasNominal ? nominal : (min + max) / 2;
+  const refAbs = Math.abs(ref) || 1;
+  const tolLow  = (ref - min) / refAbs * 100;
+  const tolHigh = (max - ref) / refAbs * 100;
+  const larger    = Math.max(Math.abs(tolHigh), Math.abs(tolLow));
+  const asymmetry = larger > 0 ? Math.abs(tolHigh - tolLow) / larger : 0;
+  let percText, avgTol;
+  if (asymmetry < 0.02) {
+    avgTol = (Math.abs(tolLow) + Math.abs(tolHigh)) / 2;
+    percText = `±${avgTol.toFixed(2)}%`;
+  } else {
+    avgTol = larger;
+    percText = `+${tolHigh.toFixed(2)}% / −${tolLow.toFixed(2)}%`;
+  }
+  const span = max - min;
+  const markerPct = span > 0 ? Math.min(100, Math.max(0, (ref - min) / span * 100)) : 50;
+  return { min, max, ref, tolLow, tolHigh, larger, percText, avgTol, markerPct, span };
+}
+
+function _tolClass(avgTol) {
+  return avgTol < 1 ? "tight" : avgTol < 5 ? "moderate" : "loose";
+}
+
+/**
+ * Renders a visual tolerance/range widget.
+ * compact=false → full card with labelled min/max bar (for node bodies & step rows)
+ * compact=true  → inline pill row (for param rows & root header)
+ */
+function renderRangeWidget(range, nominal, compact = false) {
+  if (!range || typeof range.min !== 'number' || typeof range.max !== 'number') return "";
+  const t   = _computeTol(range, nominal);
+  const cls = _tolClass(t.avgTol);
+
+  // etichetta modalità
+  const modeLabel = range.mode && range.mode !== 'worst_case'
+    ? range.mode === 'gaussian'
+      ? `gaussian ${range.sigma ?? 3}σ`
+      : 'RSS'
+    : (range.source === 'propagated' ? 'worst-case' : '');
+  const modeTag = modeLabel
+    ? ` <span style="font-size:0.60rem;opacity:0.55;font-style:italic">${esc(modeLabel)}</span>`
+    : "";
+
+  const src = range.source
+    ? ` <span class="tol-source-tag">(${esc(range.source)})</span>`
+    : "";
+
+  if (compact) {
+    return `<div class="tol-compact">
+      <div class="tol-bar-wrap">
+        <div class="tol-bar-fill ${cls}" style="left:0;right:0"></div>
+        <div class="tol-bar-marker" style="left:${t.markerPct.toFixed(1)}%"></div>
+      </div>
+      <span class="tol-perc ${cls}">${esc(t.percText)}</span>
+      <span style="font-size:0.68rem;color:var(--vscode-descriptionForeground);">${esc(fmt(t.min))}…${esc(fmt(t.max))}${src}</span>
+    </div>`;
+  }
+
+  return `<div class="tol-widget ${cls}">
+    <div class="tol-header-row">
+      <span class="tol-label">Tolerance${src}</span>
+      <span class="tol-perc ${cls}">${esc(t.percText)}</span>
+    </div>
+    <div class="tol-bar-wrap">
+      <div class="tol-bar-fill ${cls}" style="left:0;right:0"></div>
+      <div class="tol-bar-marker" style="left:${t.markerPct.toFixed(1)}%"></div>
+    </div>
+    <div class="tol-minmax-row">
+      <div class="tol-lim">
+        <span class="tol-lim-label">min</span>
+        <span class="tol-lim-val">${esc(fmt(t.min))}</span>
+      </div>
+      <div class="tol-lim" style="text-align:center;font-size:0.68rem;opacity:0.50;align-self:center">range</div>
+      <div class="tol-lim" style="text-align:right">
+        <span class="tol-lim-label">max</span>
+        <span class="tol-lim-val">${esc(fmt(t.max))}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* Backward-compat alias used in renderRootHeader (compact pill) */
+function renderRangeHtml(range, nominal) { return renderRangeWidget(range, nominal, true); }
 
 function selectedFormula() {
   return formulas.find(f => f.id === selectedId) || null;
@@ -950,6 +1188,14 @@ function renderRootHeader(formula, tree) {
   valEl.textContent = fmt(rVal);
   valEl.className   = "result-value" + (hasErr ? " has-error" : "");
   unitEl.textContent = rUnit || "";
+  // Show propagated/declared range if available
+  const range = tree && tree.result && tree.result.range ? tree.result.range : (formula && formula.range ? formula.range : undefined);
+  const rangeHtml = range ? renderRangeHtml(range, rVal) : "";
+  // append small range info after unit
+  const existing = document.getElementById("result-unit");
+  if (existing) {
+    existing.innerHTML = (rUnit || "") + (rangeHtml ? ` <span class="range-text">${rangeHtml}</span>` : "");
+  }
 }
 
 /* ─── Message rendering ───────────────────────────────────────────────────── */
@@ -989,24 +1235,47 @@ function renderParamRow(inp, child) {
   const val     = inp.currentValue !== undefined ? inp.currentValue : inp.defaultValue;
   const editable = inp.editable !== false;
   const dotClass = inp.kind || "unknown";
+  const childKey = child ? (child.instanceId || child.name) : null;
+  const isOpen   = childKey && openNodes.has(childKey);
 
   const valueCell = editable
     ? `<input type="number" step="any" data-name="${esc(inp.name)}" value="${esc(inputVal(inp))}">`
     : `<span>${esc(fmtUnit(val, u))}</span>`;
   const unitSpan = editable && u ? `<span class="param-unit">${esc(u)}</span>` : "";
 
+  // Se il parametro è una formula con figlio, mostra la freccia espansione inline.
+  // Se è una formula a profondità massima (child undefined), mostra "depth limit".
   let actionCell = "";
+  let childPanelHtml = "";
+
   if (child) {
-    const nodeKey = child.instanceId || child.name;
-    const isOpen  = openNodes.has(nodeKey);
-    actionCell = `<button class="expand-link" data-expand="${esc(nodeKey)}">${isOpen ? "▼ hide" : "▶ show"}</button>`;
+    actionCell = `<button class="expand-link" data-expand="${esc(childKey)}" title="${isOpen ? "Nascondi dettagli" : "Mostra dettagli"}">${isOpen ? "▼" : "▶"}</button>`;
+
+    // Pannello inline: mostra l'espressione del figlio + i suoi parametri diretti
+    const childInputs = child.localInputs || [];
+    const grandChildByName = new Map((child.children || []).map(c => [c.name, c]));
+    const paramsInner = childInputs.length
+      ? childInputs.map(ci => renderParamRow(ci, grandChildByName.get(ci.name))).join("")
+      : `<div style="font-size:0.78rem;color:var(--vscode-descriptionForeground);padding:4px 0;">Nessun parametro modificabile.</div>`;
+
+    const childErrors   = renderMsgs(child.errors,   "error");
+    const childWarnings = renderMsgs(child.warnings, "warning");
+    const exprLine = child.expression
+      ? `<div style="font-size:0.78rem;color:var(--vscode-descriptionForeground);font-family:var(--vscode-editor-font-family,Consolas,monospace);margin-bottom:4px;">${esc(child.expression)}</div>`
+      : "";
+    const rangeInner = child.result && child.result.range
+      ? renderRangeWidget(child.result.range, child.result.value, true)
+      : "";
+
+    childPanelHtml = `
+      <div class="inline-child-params${isOpen ? " open" : ""}" id="child-${esc(childKey)}">
+        ${exprLine}${rangeInner}${childErrors}${childWarnings}
+        <div class="params-table">${paramsInner}</div>
+      </div>`;
+
   } else if (inp.kind === "formula") {
     actionCell = `<span style="font-size:0.68rem;color:var(--vscode-descriptionForeground)">depth limit</span>`;
   }
-
-  const childHtml = child
-    ? `<div class="node-children" id="child-${esc(child.instanceId || child.name)}" ${openNodes.has(child.instanceId || child.name) ? "" : 'style="display:none"'}>${renderNodeCard(child)}</div>`
-    : "";
 
   return `
     <div class="${classes}" data-name="${esc(inp.name)}">
@@ -1020,7 +1289,7 @@ function renderParamRow(inp, child) {
       ${inp.errors && inp.errors.length ? `<div class="param-messages">${renderMsgs(inp.errors, "error")}</div>` : ""}
       ${inp.warnings && inp.warnings.length ? `<div class="param-messages">${renderMsgs(inp.warnings, "warning")}</div>` : ""}
     </div>
-    ${childHtml}`;
+    ${childPanelHtml}`;
 }
 
 /* ─── Render a tree node card ─────────────────────────────────────────────── */
@@ -1076,6 +1345,7 @@ function renderNodeCard(node) {
         ${renderMsgs(node.errors,   "error")}
         ${renderMsgs(node.warnings, "warning")}
         ${node.cycle ? `<div class="msg error">Cycle: ${esc((node.cyclePath || []).join(" → "))}</div>` : ""}
+        ${node.result && node.result.range ? renderRangeWidget(node.result.range, node.result.value, false) : ""}
         ${paramsHtml}
       </div>
     </div>`;
@@ -1120,6 +1390,45 @@ function renderStepsPanel(formula) {
     // la radice (depth 0) è allineata a sinistra.
     const indent = d * 18;
     const diffExpr = s.resolved && s.resolved !== s.expression;
+
+    // ── Tolerance/output range for this step ──
+    const range   = s.range;
+    const hasRange = range && isFinite(range.min) && isFinite(range.max);
+    // Per il calcolo percentuale
+    const refVal = hasRange && isFinite(s.result) ? s.result : null;
+    let rangeLine = "";
+    if (hasRange && refVal !== null) {
+      rangeLine = renderRangeWidget(range, refVal, false);
+    }
+
+    // ── Input tolerances for this step ──
+    let inputTolHtml = "";
+    if (s.inputTolerances && s.inputTolerances.length) {
+      const items = s.inputTolerances.map(it => {
+        let txt = "";
+        let tc  = "moderate";
+        if (it.tol !== undefined) {
+          txt = `±${it.tol}%`;
+          tc  = _tolClass(it.tol);
+        } else {
+          const parts = [];
+          if (it.min !== undefined) parts.push(`min=${fmt(it.min)}`);
+          if (it.max !== undefined) parts.push(`max=${fmt(it.max)}`);
+          txt = parts.join(", ");
+        }
+        const srcLabel = it.source === 'unknown' ? '(not declared)' : `(${it.source})`;
+        return `<div class="itol-row">
+          <span class="itol-name">${esc(it.name)}</span>
+          <span class="tol-perc ${tc}">${esc(txt)}</span>
+          <span class="itol-src">${esc(srcLabel)}</span>
+        </div>`;
+      }).join("");
+      inputTolHtml = `<div class="itol-section">
+        <div class="itol-section-title">Input Tolerances</div>
+        ${items}
+      </div>`;
+    }
+
     return `
       <div class="step-row depth-${d}" style="padding-left:${8 + indent}px">
         <span class="step-depth-pip" style="background:${color}22;color:${color}" title="depth ${d}">${d}</span>
@@ -1127,6 +1436,8 @@ function renderStepsPanel(formula) {
         <span class="step-expr">
           ${esc(s.expression)}
           ${diffExpr ? `<br><span style="opacity:0.6">→ ${esc(s.resolved)}</span>` : ""}
+          ${rangeLine}
+          ${inputTolHtml}
         </span>
         <span class="step-result">${esc(fmtUnit(s.result, s.unit || ""))}</span>
       </div>`;
@@ -1195,12 +1506,18 @@ function attachExpandLinks() {
   document.querySelectorAll(".expand-link[data-expand]").forEach(btn => {
     btn.addEventListener("click", e => {
       e.stopPropagation();
-      const key   = btn.dataset.expand;
+      const key = btn.dataset.expand;
+      // Cerca prima il pannello inline (nuovo), poi il vecchio node-children
       const child = document.getElementById(`child-${key}`);
       if (!child) return;
-      const visible = child.style.display !== "none";
-      child.style.display = visible ? "none" : "";
-      btn.textContent = visible ? "▶ show" : "▼ hide";
+      const isInline = child.classList.contains("inline-child-params");
+      const visible = isInline ? child.classList.contains("open") : child.style.display !== "none";
+      if (isInline) {
+        child.classList.toggle("open", !visible);
+      } else {
+        child.style.display = visible ? "none" : "";
+      }
+      btn.textContent = visible ? "▶" : "▼";
       if (visible) openNodes.delete(key); else openNodes.add(key);
       persist();
     });

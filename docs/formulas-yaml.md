@@ -22,25 +22,23 @@ YAML root object where **keys** = formula IDs (e.g., `power`), **values** = obje
 | `steps`    | string[]  | No        | `['Step1', 'Step2']`             | Explain traces in UI. |
 | `labels`   | string[]  | No        | `['table_lookup']`               | Tags: `complex_expression`, `table_lookup`. |
 | `revision` | string    | No        | `v1.0`                           | Versioning. |
+| `parameters` | string[] / object | No | `[x, offset]` | Makes the formula callable as `FORMULA(arg1, arg2)` with exact arity. |
+| `min` / `max` | number | No | `min: 22` | Absolute variation range for constants or final formula result. |
+| `tol` | number / percent string | No | `tol: 5` or `tol: 5%` | Percent tolerance around the nominal value. |
+| `ranges` | object | No | `ranges: { vin: { min: 22, max: 26 } }` | Per-dependency range overrides for final tolerance propagation. |
 
-### Full Example (from `examples/full_showcase/formulas.yaml`)
+### Full Example (from `examples/cases/14_complex_formulas/formulas.yaml`)
 
 ```yaml
-vin:
-  value: 24
-  unit: V
-
-current:
-  value: 2
-  unit: A
-
-power:
-  formula: vin * current
-  unit: W
-
-NTC_R_25:
-  formula: csv("data/ntc_10k.csv", "25", "temp_c", "res_ohm")
-  unit: ohm
+ARR:
+  value: [10, -3, 7, 2]
+  tolerance: 5
+MYFN:
+  formula: abs(int(a)) + mod(b, 5)
+  parameters: [a, b]
+OUT_INT_ABS_MOD:
+  formula: MYFN(ARR[1], ARR[3])
+  unit: count
 ```
 
 ## Expressions & Features
@@ -50,7 +48,7 @@ NTC_R_25:
 | Category | Functions/Constants |
 |----------|---------------------|
 | Trig     | sin, cos, tan, asin, acos, atan, atan2 |
-| Math     | sqrt, abs, min, max, pow, floor, ceil, round, log, log10, exp |
+| Math     | sqrt, abs/ass, int, mod, min, max, pow/power, floor, ceil, round, trunc, log, log10, log2, exp, hypot |
 | Const    | pi, e, deg2rad, rad2deg |
 | Lookup   | csv, table, lookup |
 | Types    | uint8_t, uint16_t, uint32_t, int8_t, int16_t, int32_t, float, double, bool |
@@ -79,6 +77,60 @@ NTC_R_25:
     | `nearest`/`closest` | Nearest row value. |
   - e.g., `csv("ntc_10k.csv","25","res_ohm")` (exact), `csv("ntc.csv","24.9","r","temp","linear")` → interp @24.9°C.
 - **Units**: Validation/conversion (e.g., `2 A * 24 V = 48 W`).
+
+### Tables, Parameters, and Tolerances
+
+```yaml
+gain:
+  parameters: [x, offset]
+  formula: x * 2 + offset
+
+calibration:
+  value: [1, 2, 3.2]
+
+selected_gain:
+  formula: gain(calibration[2], 1)
+
+vin:
+  value: 24
+  unit: V
+  tol: 5
+
+current:
+  value: 2
+  unit: A
+  min: 1.8
+  max: 2.2
+
+power:
+  formula: vin * current
+  unit: W
+```
+
+`value` arrays are zero-indexed (`calibration[2]` returns `3.2`). Formula calls must pass exactly the parameters declared in `parameters`.
+
+### Tolerance propagation model (`tol`, `min`/`max`, `ranges`)
+
+CalcDocs can propagate **uncertainty** through your formula dependency graph.
+
+When a YAML symbol defines a tolerance (`tol` percentage and/or `min`/`max`), CalcDocs computes a numeric `range` (min/max) for that symbol.
+
+If the symbol is used inside other formulas, the tolerance is propagated along the formula dependency tree.
+
+**Main rule (worst-case propagation):**
+- if a final formula does not declare a tolerance directly, its interval is estimated by combining the extremes (min/max) of its dependencies;
+- for non-linear operators (e.g. divisions, multiplications, functions), the estimate uses the **worst-case** approach: it tries all admissible min/max combinations among the dependencies (bounded by a complexity limit) and then takes:
+  - `min` = the minimum value among all evaluations,
+  - `max` = the maximum value among all evaluations.
+
+**Per-dependency overrides:**
+- `ranges:` lets you restrict (or redefine) the interval of specific dependencies used by the formula (e.g. `ranges: { R1: { tol: 1 } }`).
+- `tolerance.parameters:` lets you assign tolerances to the parameters of a parameterized formula (e.g. `DIVIDER` with `parameters: [V, R1, R2]`).
+
+This is the same logic used by the test case `examples/cases/15_tolerance_propagation` (propagation through component chains and final min/max results).
+
+For a UI-focused guide and usage tips, see:
+- [Tolerance propagation & formula ranges](tolerance-and-ranges.md)
 
 ## Effect on `.c` Files
 

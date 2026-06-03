@@ -1,3 +1,5 @@
+import { TolMode } from "../types/FormulaEntry";
+
 /**
  * Tipi condivisi tra l'estensione VS Code e la WebView React.
  * Copia questo file in: src/ui/webview-types.ts
@@ -39,12 +41,26 @@ export type FormulaTreeNode = {
     value?: number;
     unit?: string;
     error?: string;
+    range?: {
+      min: number;
+      max: number;
+      source: 'declared' | 'propagated';
+      mode?: 'worst_case' | 'rss' | 'gaussian';
+      sigma?: number;
+    };
   };
   errors?: string[];
   warnings?: string[];
   cycle?: boolean;
   cyclePath?: string[];
   depthLimited?: boolean;
+  range?: {
+    min: number;
+    max: number;
+    source: 'declared' | 'propagated';
+    mode?: 'worst_case' | 'rss' | 'gaussian';
+    sigma?: number;
+  };
 };
 
 export type FormulaEntry = {
@@ -60,6 +76,11 @@ export type FormulaEntry = {
   warnings?: string[];
   line?: number;
   type?: 'formula' | 'constant';
+  range?: {
+    min: number;
+    max: number;
+    source: 'declared' | 'propagated';
+  };
 };
 
 // ─── Evaluation primitives ────────────────────────────────────────────────────
@@ -71,7 +92,27 @@ export type EvalStep = {
   result: number;
   unit?: string;
   depth?: number; // livello di annidamento (0 = formula radice)
+  range?: {
+    min: number;
+    max: number;
+    source: 'declared' | 'propagated';
+    mode?: TolMode;
+    sigma?: number;
+  };
+  /**
+   * Tolleranze note sui parametri d'ingresso di questa formula.
+   * Ogni voce corrisponde a un parametro dichiarato nel tolerance.parameters YAML.
+   * Se vuoto significa che non ci sono tolleranze note sugli input.
+   */
+  inputTolerances?: Array<{
+    name: string;
+    source: 'declared' | 'propagated' | 'unknown';
+    tol?: number;
+    min?: number;
+    max?: number;
+  }>;
 };
+
 
 /** Full snapshot of every computed intermediate value during one evaluation. */
 export type EvaluationState = {

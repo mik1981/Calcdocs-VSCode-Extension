@@ -1,3 +1,7 @@
+# Case 06: CSV Lookup
+# Demonstrates the csv(...) function to interpolate/lookup a value from a CSV table.
+# Here we lookup resistance as a function of temperature using linear mode.
 R6: 
   formula: csv("table.csv", "24.9", "temp", "res", "linear")
   unit: ohm
+

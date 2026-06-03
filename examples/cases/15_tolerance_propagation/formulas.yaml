@@ -1,0 +1,173 @@
+# ============================================================================
+# Case 15: Tolerance Propagation in Component Chains
+# ============================================================================
+# This case validates tolerance range computation and propagation across chains.
+# It exercises:
+# - tol% on constants and arrays
+# - explicit min/max bounds
+# - overriding dependency ranges using `ranges:`
+# - parameter tolerance for parametrized formulas
+# - tol propagation through intermediate derived values
+# - edge behavior (e.g., zero tol)
+#
+# Each scenario below is separated and annotated to explain what feature it targets.
+
+# Scenarios overview (original description retained for context):
+# This case demonstrates how CalcDocs propagates component tolerances (tol,
+
+# min, max) through formula chains, computing the resulting range on the
+# final computed value.
+#
+# Scenarios covered:
+#   1. tol% on a single constant, propagated to a formula using it
+#   2. Multiple constants with tol, combined (worst-case propagation)
+#   3. Explicit min/max bounds on a constant
+#   4. ranges override: overriding dependency tolerance in parent formula
+#   5. Parameterized formula with parameter tolerance
+#   6. Array with tol on each element
+#   7. Mixed: tol + min/max in the same chain
+#   8. Deep chain: tol propagates through intermediate derived values
+#   9. Edge: zero tol (exact values)
+# ============================================================================
+
+# --- Scenario 1: Simple tol% on a resistor ---
+# A resistor of 100 ohm with 5% tolerance → range [95, 105]
+# When used in a formula I = V / R, the range propagates
+SUPPLY_V:
+  value: 5
+  unit: V
+R1:
+  value: 100
+  unit: ohm
+  tol: 5
+I_R1:
+  formula: SUPPLY_V / R1
+  unit: A
+
+# --- Scenario 2: Multiple tolerance sources combined ---
+# R2 = 220 ohm ±10%, R3 = 330 ohm ±5%
+# Total series resistance R_series = R2 + R3 → worst-case: min= (198+313.5)=511.5, max= (242+346.5)=588.5
+R2:
+  value: 220
+  unit: ohm
+  tol: 10
+R3:
+  value: 330
+  unit: ohm
+  tol: 5
+R_SERIES:
+  formula: R2 + R3
+  unit: ohm
+  ranges:
+    R2:
+      tol: 10
+      tol_mode: rss
+      sigma: 3
+    R3:
+      tol: 5
+      tol_mode: gaussian
+      sigma: 2
+
+
+# --- Scenario 3: Explicit min/max bounds (no tol%, just absolute range) ---
+# A current source with explicit bounds
+CURRENT_SOURCE_A:
+  value: 0.5
+  unit: A
+  min: 0.48
+  max: 0.52
+POWER_SOURCE_W:
+  formula: SUPPLY_V * CURRENT_SOURCE_A
+  unit: W
+
+# --- Scenario 4: ranges override - override tolerance of a dependency ---
+# R1 normally has 5% tol, but in this divider circuit we use a tighter range
+V_DIVIDER_RAW:
+  formula: SUPPLY_V * R3 / (R1 + R3)
+  unit: V
+  ranges:
+    R1:
+      tol: 1
+    R3:
+      min: 320
+      max: 340
+
+# --- Scenario 5: Parameterized formula with parameter tolerance ---
+# A generic voltage divider function
+DIVIDER:
+  formula: V * R2 / (R1 + R2)
+  parameters: [V, R1, R2]
+  tolerance:
+    parameters:
+      V:
+        tol: 2
+      R1:
+        tol: 1
+      R2:
+        tol: 5
+DIVIDER_OUT:
+  formula: DIVIDER(SUPPLY_V, 1000, 2000)
+  unit: V
+
+# --- Scenario 6: Array with tol ---
+# An array of resistor values with tolerance
+RES_ARRAY:
+  value: [100, 220, 330, 470]
+  unit: ohm
+  tol: 5
+# Use individual elements
+ARRAY_SUM:
+  formula: RES_ARRAY[0] + RES_ARRAY[1] + RES_ARRAY[2]
+  unit: ohm
+
+# --- Scenario 7: Mixed tol + min/max in the same chain ---
+# Voltage reference with both explicit min/max and dependent formula
+VREF:
+  value: 2.5
+  unit: V
+  min: 2.48
+  max: 2.52
+DIVIDER_RATIO:
+  value: 0.4
+  tol: 2
+VOUT_REF:
+  formula: VREF * DIVIDER_RATIO
+  unit: V
+
+# --- Scenario 8: Deep chain - tol propagates through intermediate derived values ---
+# Stage 1: raw measurement
+RAW_ADC:
+  value: 2048
+  unit: count
+  tol: 0.5
+# Stage 2: voltage from ADC (V = count * 3.3 / 4095)
+ADC_VOLTAGE:
+  formula: RAW_ADC * 3.3 / 4095
+  unit: V
+# Stage 3: amplified that add 1% of tolorance
+K_10_1P: {value: 10, tol: 1}
+AMPLIFIED_V:
+  formula: ADC_VOLTAGE * K_10_1P
+  unit: V
+# Stage 4: final conversion (current sense, 0.1 ohm shunt)
+SENSED_CURRENT:
+  formula: AMPLIFIED_V / 0.1
+  unit: A
+
+# --- Scenario 9: Zero tol (exact values, no range) ---
+EXACT_COEFF:
+  value: 1.23
+EXACT_RESULT:
+  formula: EXACT_COEFF * SUPPLY_V
+  unit: V
+
+# --- Scenario 10: tol on a formula output (re-declared tolerance) ---
+# A measured value with its own declared tolerance independent of dependencies
+MEASURED_TEMP:
+  value: 25.0
+  unit: degc
+  tol: 2
+COMPENSATED_OUTPUT:
+  formula: MEASURED_TEMP * 1.05 + 0.5
+  unit: degc
+  tol: 3

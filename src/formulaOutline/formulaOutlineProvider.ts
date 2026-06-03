@@ -143,7 +143,15 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
     fontWeight: 'bold'
   });
 
+  // Keep YAML comment colors aligned with VSCode theme. We don't apply background/bold.
+  private commentDeco = vscode.window.createTextEditorDecorationType({
+    color: new vscode.ThemeColor('editorLineNumber.activeForeground'),
+    fontStyle: 'italic',
+    rangeBehavior: DecorationRangeBehavior.ClosedClosed,
+  });
+
   private missingVarDeco = vscode.window.createTextEditorDecorationType({
+
     border: '1px dashed rgba(255, 80, 80, 0.9)',
     backgroundColor: 'rgba(255, 80, 80, 0.15)',
     color: 'rgba(255, 120, 120, 1)',
@@ -280,6 +288,8 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
     const fieldDecos: vscode.DecorationOptions[] = [];
     const opDecos: vscode.DecorationOptions[] = [];
     const missingVarDecos: vscode.DecorationOptions[] = [];
+    const commentDecos: vscode.DecorationOptions[] = [];
+
 
     const cSymbols = this._getSymbolValues();
     const cSymbolUnits = this._getSymbolUnits();
@@ -305,7 +315,7 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
 
       // resolveFormulaValue returns the raw SI-unit value.
       // Unit scaling to the formula's `unit:` field is applied below at display time.
-      const evalResult = resolveFormulaValue(formula, symbolTable, cSymbols, lookupResolver);
+      const evalResult = resolveFormulaValue(formula, symbolTable, cSymbols, lookupResolver, formulas);
 
       const hasExpr = !!formula.expr;
       const hasExternal = /(csv|table|lookup)/i.test(formula.expr || '');
@@ -345,24 +355,38 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
       for (let l = formula.lineStart + 1; l <= formula.lineEnd; l++) {
         const lineText = doc.lineAt(l).text;
 
-        // fields
-        if (/^( +)?(formula|unit|steps|value):/.test(lineText)) {
+        // fields (valid YAML keywords for formulas*.yaml)
+        // Include tol/min/max so they are never treated as “unrecognized fields”.
+        if (/^(\s*)(formula|unit|steps|value|tol|min|max|ranges|tolerance|parameters)\s*:/.test(lineText)) {
+          const colonPos = lineText.indexOf(':');
           fieldDecos.push({
-            range: new vscode.Range(l, 0, l, lineText.indexOf(':') + 1)
+            range: new vscode.Range(l, 0, l, colonPos >= 0 ? colonPos + 1 : lineText.length)
           });
         }
 
-        // operators
-        const opRegex = /([+*\/\-()])|csv|sin|table|lookup/gi;
-        let match;
-        while ((match = opRegex.exec(lineText)) !== null) {
-          opDecos.push({
-            range: new vscode.Range(l, match.index, l, match.index + match[0].length)
+        // YAML comments: lines matching ^\s*#
+        // Render the whole line, but use VSCode theme colors (no forced bg/bold).
+        if (/^\s*#/.test(lineText)) {
+          commentDecos.push({
+            range: new vscode.Range(l, 0, l, lineText.length)
           });
         }
 
-        // missing vars — only on `formula:` lines
-        if (/^\s*formula\s*:/.test(lineText)) {
+        // operators (skip inside YAML comments)
+        if (!/^\s*#/.test(lineText)) {
+          const opRegex = /([+*\/\-()])|csv|sin|table|lookup/gi;
+          let match;
+          while ((match = opRegex.exec(lineText)) !== null) {
+            opDecos.push({
+              range: new vscode.Range(l, match.index, l, match.index + match[0].length)
+            });
+          }
+        }
+
+
+        // missing vars — only on `formula:` lines (skip inside YAML comments)
+        if (!/^\s*#/.test(lineText) && /^\s*formula\s*:/.test(lineText)) {
+
           const exprPart = lineText.split(':').slice(1).join(':');
 
           let cleanExpr = exprPart.replace(/(csv|table|lookup)\([^)]*\)/gi, '');
@@ -427,12 +451,12 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
 
       // Valuta la formula derivata se necessario
       let derivedEvalResult = evalResult;
-      if (formulaWasDerived) {
+      if (formulaWasDerived && !formula.unit) {
         const tempFormula: OutlineFormula = {
           ...formula,
           expr: derivedExpr,
         };
-        derivedEvalResult = resolveFormulaValue(tempFormula, symbolTable, cSymbols, lookupResolver);
+        derivedEvalResult = resolveFormulaValue(tempFormula, symbolTable, cSymbols, lookupResolver, formulas);
       }
 
       // Ricalcola isResolved con la formula derivata
@@ -479,7 +503,9 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
       //   unit:'V', raw=3.3    → scaled=3.3,   display="3.3 [V]"
       let valueText: string;
 
-      if (isResolvedFinal) {
+      if (formula.values) {
+        valueText = `[${formula.values.length} values]`;
+      } else if (isResolvedFinal) {
         if (unitKnownFinal) {
           const scaled = scaleValueToUnit(derivedEvalResult.resolved!, derivedUnit);
           valueText = formatGhostNumber(scaled);
@@ -600,6 +626,7 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
     editor.setDecorations(this.fieldDeco, fieldDecos);
     editor.setDecorations(this.opDeco, opDecos);
     editor.setDecorations(this.missingVarDeco, missingVarDecos);
+    editor.setDecorations(this.commentDeco, commentDecos);
   }
 
   // ---------------------------------------------------------------------------
@@ -648,5 +675,7 @@ export class FormulaOutlineProvider implements vscode.FoldingRangeProvider {
     this.fieldDeco.dispose();
     this.opDeco.dispose();
     this.missingVarDeco.dispose();
+    this.commentDeco.dispose();
   }
+
 }

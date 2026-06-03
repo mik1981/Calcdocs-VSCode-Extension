@@ -1,2 +1,6 @@
+# Case 05: YAML Injection
+# Demonstrates parsing values defined directly in the formulas YAML.
+# The injected YAML (via VSCode inline/engine sync) is expected to be merged with evaluated results.
 vin: { value: 12, unit: V }
 curr: { value: 2, unit: mA }
+

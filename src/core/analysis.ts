@@ -1409,6 +1409,17 @@ function rebuildFormulaIndexWithEngine(
       entry.evaluationWarnings = evaluated.warnings.length
         ? [...evaluated.warnings]
         : undefined;
+      entry.toleranceResult = evaluated.range
+        ? {
+            min: evaluated.range.min,
+            max: evaluated.range.max,
+            source: evaluated.range.source,
+            tol: evaluated.range.tol,
+            nominalValue: evaluated.range.nominalValue,
+            mode: evaluated.range.mode,
+            sigma: evaluated.range.sigma,
+          }
+        : undefined;
 
       if (evaluated.outputUnit) {
         entry.unit = evaluated.outputUnit;

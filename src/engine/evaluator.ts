@@ -5,6 +5,7 @@ import {
   parseExpression,
   printExpression,
 } from "./ast";
+import { ENGINEERING_MATH_SCOPE, isLookupFunctionName } from "./mathScope";
 import { formatNumberToSigFigs } from "../utils/nformat";
 import {
   addQuantities,
@@ -21,6 +22,7 @@ import {
   toDisplayValue,
   type Quantity,
   type UnitResult,
+  dimensionsEqual,
 } from "./units";
 
 type RuntimeValue =
@@ -37,6 +39,8 @@ export type PrimitiveArgument = number | string;
 
 export type EvaluationContext = {
   resolveIdentifier: (name: string) => Quantity | undefined;
+  resolveArrayIdentifier?: (name: string) => Quantity[] | undefined;
+  resolveFunctionCall?: (functionName: string, args: Quantity[]) => UnitResult<Quantity> | undefined;
   resolveLookup?: (functionName: string, args: PrimitiveArgument[]) => number | Quantity;
   ignoreUnitCompatibility?: boolean;
   onWarning?: (message: string) => void;
@@ -184,6 +188,183 @@ function quantityToPrimitive(quantity: Quantity): number {
   return toDisplayValue(quantity);
 }
 
+function quantityScaleFactor(quantity: Quantity): number {
+  const displayValue = quantityToPrimitive(quantity);
+  return displayValue === 0 ? 1 : quantity.valueSi / displayValue;
+}
+
+function scaleQuantityDimension(quantity: Quantity, exponent: number): Quantity {
+  return {
+    valueSi: Math.pow(quantity.valueSi, exponent),
+    dimension: {
+      M: quantity.dimension.M * exponent,
+      L: quantity.dimension.L * exponent,
+      T: quantity.dimension.T * exponent,
+      I: quantity.dimension.I * exponent,
+      K: quantity.dimension.K * exponent,
+    },
+    displayUnit: quantity.displayUnit
+      ? `${quantity.displayUnit}^${exponent}`
+      : undefined,
+  };
+}
+
+function requireDimensionless(quantity: Quantity, label: string): UnitResult<number> {
+  if (!isDimensionless(quantity.dimension)) {
+    return {
+      ok: false,
+      error: `${label} requires a dimensionless argument`,
+    };
+  }
+
+  return {
+    ok: true,
+    value: quantityToPrimitive(quantity),
+  };
+}
+
+function evaluateNumericMathFunction(
+  normalized: string,
+  args: RuntimeValue[]
+): UnitResult<RuntimeValue> | undefined {
+  const mathFn = ENGINEERING_MATH_SCOPE[normalized];
+  if (typeof mathFn !== "function") {
+    return undefined;
+  }
+
+  const quantities: Quantity[] = [];
+  for (const arg of args) {
+    const quantity = toQuantity(arg, `${normalized}()`);
+    if (!quantity.ok) {
+      return quantity;
+    }
+    quantities.push(quantity.value);
+  }
+
+  const quantityResult = (quantity: Quantity): UnitResult<RuntimeValue> => ({
+    ok: true,
+    value: {
+      kind: "quantity",
+      quantity,
+    },
+  });
+
+  if (["abs", "ass", "fabs", "int", "integer", "ceil", "ceiling", "floor", "round", "trunc"].includes(normalized)) {
+    if (quantities.length !== 1) {
+      return { ok: false, error: `${normalized}() expects one argument` };
+    }
+
+    const computed = mathFn(quantityToPrimitive(quantities[0]));
+    if (!Number.isFinite(computed)) {
+      return { ok: false, error: `${normalized}() returned non-finite value` };
+    }
+
+    return quantityResult({
+      ...quantities[0],
+      valueSi: computed * quantityScaleFactor(quantities[0]),
+    });
+  }
+
+  if (normalized === "sign") {
+    if (quantities.length !== 1) {
+      return { ok: false, error: "sign() expects one argument" };
+    }
+    return quantityResult(createDimensionlessQuantity(Math.sign(quantities[0].valueSi)));
+  }
+
+  if (normalized === "sqrt") {
+    if (quantities.length !== 1) {
+      return { ok: false, error: "sqrt() expects one argument" };
+    }
+    if (quantities[0].valueSi < 0) {
+      return { ok: false, error: "sqrt() requires a non-negative argument" };
+    }
+    return quantityResult(scaleQuantityDimension(quantities[0], 0.5));
+  }
+
+  if (normalized === "pow" || normalized === "power") {
+    if (quantities.length !== 2) {
+      return { ok: false, error: `${normalized}() expects two arguments` };
+    }
+    const exponent = requireDimensionless(quantities[1], `${normalized}() exponent`);
+    if (!exponent.ok) {
+      return exponent;
+    }
+    return quantityResult(scaleQuantityDimension(quantities[0], exponent.value));
+  }
+
+  if (normalized === "mod" || normalized === "modulo" || normalized === "remainder") {
+    if (quantities.length !== 2) {
+      return { ok: false, error: `${normalized}() expects two arguments` };
+    }
+    if (!isDimensionless(quantities[1].dimension) && !dimensionsEqual(quantities[0].dimension, quantities[1].dimension)) {
+      return { ok: false, error: `${normalized}() requires compatible units` };
+    }
+
+    const left = quantityToPrimitive(quantities[0]);
+    const right = quantityToPrimitive(quantities[1]);
+    const computed = mathFn(left, right);
+    if (!Number.isFinite(computed)) {
+      return { ok: false, error: `${normalized}() returned non-finite value` };
+    }
+
+    return quantityResult({
+      ...quantities[0],
+      valueSi: computed * quantityScaleFactor(quantities[0]),
+    });
+  }
+
+  if (normalized === "min" || normalized === "max") {
+    if (quantities.length === 0) {
+      return { ok: false, error: `${normalized}() expects at least one argument` };
+    }
+    const first = quantities[0];
+    for (const quantity of quantities.slice(1)) {
+      if (!dimensionsEqual(first.dimension, quantity.dimension)) {
+        return { ok: false, error: `${normalized}() requires compatible units` };
+      }
+    }
+    const selected = quantities.reduce((best, current) =>
+      normalized === "min"
+        ? current.valueSi < best.valueSi ? current : best
+        : current.valueSi > best.valueSi ? current : best
+    );
+    return quantityResult(selected);
+  }
+
+  if (normalized === "hypot") {
+    if (quantities.length === 0) {
+      return { ok: false, error: "hypot() expects at least one argument" };
+    }
+    const first = quantities[0];
+    for (const quantity of quantities.slice(1)) {
+      if (!dimensionsEqual(first.dimension, quantity.dimension)) {
+        return { ok: false, error: "hypot() requires compatible units" };
+      }
+    }
+    return quantityResult({
+      ...first,
+      valueSi: Math.hypot(...quantities.map((quantity) => quantity.valueSi)),
+    });
+  }
+
+  const primitiveArgs: number[] = [];
+  for (const quantity of quantities) {
+    const primitive = requireDimensionless(quantity, `${normalized}()`);
+    if (!primitive.ok) {
+      return primitive;
+    }
+    primitiveArgs.push(primitive.value);
+  }
+
+  const computed = mathFn(...primitiveArgs);
+  if (!Number.isFinite(computed)) {
+    return { ok: false, error: `${normalized}() returned non-finite value` };
+  }
+
+  return quantityResult(createDimensionlessQuantity(computed));
+}
+
 function runtimeToPrimitive(value: RuntimeValue): UnitResult<PrimitiveArgument> {
   if (value.kind === "string") {
     return {
@@ -205,70 +386,12 @@ function evaluateCall(
 ): UnitResult<RuntimeValue> {
   const normalized = callee.trim().toLowerCase();
 
-  if (normalized === "abs") {
-    if (args.length !== 1) {
-      return {
-        ok: false,
-        error: "abs() expects one argument",
-      };
-    }
-
-    const argument = toQuantity(args[0], "abs()");
-    if (!argument.ok) {
-      return argument;
-    }
-
-    return {
-      ok: true,
-      value: {
-        kind: "quantity",
-        quantity: {
-          ...argument.value,
-          valueSi: Math.abs(argument.value.valueSi),
-        },
-      },
-    };
+  const mathResult = evaluateNumericMathFunction(normalized, args);
+  if (mathResult) {
+    return mathResult;
   }
 
-  if (normalized === "sin" || normalized === "cos") {
-    if (args.length !== 1) {
-      return {
-        ok: false,
-        error: `${normalized}() expects one argument`,
-      };
-    }
-
-    const argument = toQuantity(args[0], `${normalized}()`);
-    if (!argument.ok) {
-      return argument;
-    }
-
-    if (!isDimensionless(argument.value.dimension)) {
-      return {
-        ok: false,
-        error: `${normalized}() requires a dimensionless argument`,
-      };
-    }
-
-    const numeric = quantityToPrimitive(argument.value);
-    const computed = normalized === "sin" ? Math.sin(numeric) : Math.cos(numeric);
-    if (!Number.isFinite(computed)) {
-      return {
-        ok: false,
-        error: `${normalized}() returned non-finite value`,
-      };
-    }
-
-    return {
-      ok: true,
-      value: {
-        kind: "quantity",
-        quantity: createDimensionlessQuantity(computed),
-      },
-    };
-  }
-
-  if (normalized === "csv" || normalized === "lookup" || normalized === "table") {
+  if (isLookupFunctionName(normalized)) {
     if (!context.resolveLookup) {
       return {
         ok: false,
@@ -353,6 +476,31 @@ function evaluateCall(
         quantity: quantity.value,
       },
     };
+  }
+
+  if (context.resolveFunctionCall) {
+    const quantityArgs: Quantity[] = [];
+    for (const arg of args) {
+      const quantity = toQuantity(arg, `${callee}()`);
+      if (!quantity.ok) {
+        return quantity;
+      }
+      quantityArgs.push(quantity.value);
+    }
+
+    const resolved = context.resolveFunctionCall(callee, quantityArgs);
+    if (resolved) {
+      if (!resolved.ok) {
+        return resolved;
+      }
+      return {
+        ok: true,
+        value: {
+          kind: "quantity",
+          quantity: resolved.value,
+        },
+      };
+    }
   }
 
   return {
@@ -496,6 +644,49 @@ function evaluateBinary(
         },
       };
     }
+    case "%": {
+      if (!isDimensionless(right.value.dimension) && !dimensionsEqual(left.value.dimension, right.value.dimension)) {
+        return {
+          ok: false,
+          error: "operator '%' requires compatible units",
+        };
+      }
+
+      const leftPrimitive = quantityToPrimitive(left.value);
+      const rightPrimitive = quantityToPrimitive(right.value);
+      const computed = leftPrimitive - rightPrimitive * Math.floor(leftPrimitive / rightPrimitive);
+      if (!Number.isFinite(computed)) {
+        return {
+          ok: false,
+          error: "operator '%' returned non-finite value",
+        };
+      }
+
+      return {
+        ok: true,
+        value: {
+          kind: "quantity",
+          quantity: {
+            ...left.value,
+            valueSi: computed * quantityScaleFactor(left.value),
+          },
+        },
+      };
+    }
+    case "^": {
+      const exponent = requireDimensionless(right.value, "operator '^' exponent");
+      if (!exponent.ok) {
+        return exponent;
+      }
+
+      return {
+        ok: true,
+        value: {
+          kind: "quantity",
+          quantity: scaleQuantityDimension(left.value, exponent.value),
+        },
+      };
+    }
   }
 }
 
@@ -521,6 +712,17 @@ function evaluateNode(
         },
       };
     case "identifier": {
+      const mathValue = ENGINEERING_MATH_SCOPE[node.name];
+      if (typeof mathValue === "number") {
+        return {
+          ok: true,
+          value: {
+            kind: "quantity",
+            quantity: createDimensionlessQuantity(mathValue),
+          },
+        };
+      }
+
       const quantity = context.resolveIdentifier(node.name);
       if (!quantity) {
         // ✅ Formula parametrizzata: variabile libera, non fallire!
@@ -590,6 +792,60 @@ function evaluateNode(
       }
 
       return evaluateCall(node.callee, args, context);
+    }
+    case "index": {
+      if (node.target.kind !== "identifier") {
+        return {
+          ok: false,
+          error: "index operator requires a table identifier",
+        };
+      }
+
+      const computedIndex = evaluateNode(node.index, context);
+      if (!computedIndex.ok) {
+        return computedIndex;
+      }
+
+      const indexQuantity = toQuantity(computedIndex.value, "index operator");
+      if (!indexQuantity.ok) {
+        return indexQuantity;
+      }
+
+      const primitiveIndex = requireDimensionless(indexQuantity.value, "index operator");
+      if (!primitiveIndex.ok) {
+        return primitiveIndex;
+      }
+
+      const index = Math.trunc(primitiveIndex.value);
+      if (Math.abs(primitiveIndex.value - index) > 1e-9) {
+        return {
+          ok: false,
+          error: "index operator requires an integer index",
+        };
+      }
+
+      const values = context.resolveArrayIdentifier?.(node.target.name);
+      if (!values) {
+        return {
+          ok: false,
+          error: `table '${node.target.name}' is not available`,
+        };
+      }
+
+      if (index < 0 || index >= values.length) {
+        return {
+          ok: false,
+          error: `index ${index} is out of range for '${node.target.name}'`,
+        };
+      }
+
+      return {
+        ok: true,
+        value: {
+          kind: "quantity",
+          quantity: values[index],
+        },
+      };
     }
   }
 }
@@ -662,32 +918,17 @@ function evaluateLiteralCall(
   lookup?: (functionName: string, args: PrimitiveArgument[]) => number | Quantity
 ): number | null {
   const normalized = callee.trim().toLowerCase();
-
-  if (normalized === "abs") {
-    if (args.length !== 1 || typeof args[0] !== "number") {
+  const mathFn = ENGINEERING_MATH_SCOPE[normalized];
+  if (typeof mathFn === "function") {
+    if (args.some((arg) => typeof arg !== "number")) {
       return null;
     }
 
-    return Math.abs(args[0]);
+    const value = mathFn(...(args as number[]));
+    return Number.isFinite(value) ? value : null;
   }
 
-  if (normalized === "sin") {
-    if (args.length !== 1 || typeof args[0] !== "number") {
-      return null;
-    }
-
-    return Math.sin(args[0]);
-  }
-
-  if (normalized === "cos") {
-    if (args.length !== 1 || typeof args[0] !== "number") {
-      return null;
-    }
-
-    return Math.cos(args[0]);
-  }
-
-  if ((normalized === "csv" || normalized === "lookup" || normalized === "table") && lookup) {
+  if (isLookupFunctionName(normalized) && lookup) {
     try {
       const value = lookup(normalized, args);
       // return Number.isFinite(value) ? value : null;
@@ -812,6 +1053,12 @@ function reduceNumericNodeOnce(
         case "/":
           value = left / right;
           break;
+        case "%":
+          value = left - right * Math.floor(left / right);
+          break;
+        case "^":
+          value = Math.pow(left, right);
+          break;
       }
 
       if (!Number.isFinite(value)) {
@@ -830,6 +1077,11 @@ function reduceNumericNodeOnce(
         },
       };
     }
+    case "index":
+      return {
+        reduced: false,
+        node,
+      };
     case "call": {
       for (let i = 0; i < node.args.length; i += 1) {
         const reducedArg = reduceNumericNodeOnce(node.args[i], lookup);

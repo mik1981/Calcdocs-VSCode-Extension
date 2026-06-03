@@ -1,2 +1,6 @@
+# Case 09: Function Calls (commented inline values)
+# Demonstrates how comment-like entries are handled in the formulas YAML.
+# The evaluator should still parse the YAML correctly and compute the resulting entry.
 COMMENTED:
   value: 28
+

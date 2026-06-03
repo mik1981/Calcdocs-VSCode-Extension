@@ -1,0 +1,16 @@
+# Tolerance propagation test expectations
+# Nominal values (tolerance ranges are verified in interactive formula viewer)
+TOL01: { value: 0.05, unit: A }
+TOL02: { value: 550, unit: ohm }
+TOL03: { value: 2.5, unit: W }
+TOL04: { value: 3.8372093023255813, unit: V }
+TOL05: { value: 3.3333333333333335, unit: V }
+TOL06: { value: 650, unit: ohm }
+TOL07: { value: 1.0, unit: V }
+TOL08: { value: 2048, unit: count }
+TOL09: { value: 1.6504032967032967, unit: V }
+TOL10: { value: 16.504032967032967, unit: V }
+TOL11: { value: 165.04032967032966, unit: A }
+TOL12: { value: 6.15, unit: V }
+TOL13: { value: 25, unit: degc }
+TOL14: { value: 26.75, unit: degc }

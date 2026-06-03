@@ -1,3 +1,11 @@
+# Case 14: Complex Formulas
+# Demonstrates multi-step formula evaluation with:
+# - arithmetic expressions
+# - tolerance propagation (tol on ADC_MAX and ARR)
+# - unit handling (V, A, count, A^2)
+# - function macros (MYFN) and array indexing (ARR[i])
+#
+# The final outputs validate that the engine correctly evaluates the dependency graph.
 ADC_PHASE_U:
   value: 2840
   unit: count
@@ -9,6 +17,7 @@ ADC_REF_V:
   unit: V
 ADC_MAX:
   value: 4095
+  tol: 5
   unit: count
 SHUNT_RES:
   value: 0.002
@@ -53,3 +62,17 @@ CURRENT_STAGE:
 FINAL_STAGE:
   formula: FILTERED_CURRENT_A
   unit: A
+
+ARR:
+  value: [10, -3, 7, 2]
+  unit: ohm
+  tol: 5
+MYFN:
+  formula: abs(int(a)) + mod(b, 5)
+  parameters: [a, b]
+OUT_INT_ABS_MOD:
+  formula: MYFN(ARR[1], ARR[3])
+  unit: count
+OUT_INT_ABS_MOD2:
+  formula: ARR[1]
+

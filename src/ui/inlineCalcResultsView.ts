@@ -196,7 +196,8 @@ export class InlineCalcResultsViewProvider
 
     for (const formula of formulas) {
       const lineLabel = `L${formula.lineStart + 1}`;
-      const label = `${lineLabel} ${clampText(formula.id, ITEM_SOURCE_MAX_LEN)}`;
+      const label = clampText(formula.id, ITEM_SOURCE_MAX_LEN);
+      // const label = `${clampText(formula.id, ITEM_SOURCE_MAX_LEN)} (${lineLabel})`;
       const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
 
       // Show formula expression or value as description
@@ -207,6 +208,7 @@ export class InlineCalcResultsViewProvider
             ? `${formula.value}${formula.unit ? ` ${formula.unit}` : ""}`
             : "—";
 
+      //item.description = `${lineLabel} ${description}`;
       item.description = description;
 
       // Build tooltip with full information

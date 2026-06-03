@@ -7,6 +7,8 @@ import { evaluateInlineCalcs } from "../core/inlineCalc";
 import type { CalcDocsState } from "../core/state";
 import type { FormulaEntry as CoreFormulaEntry } from "../types/FormulaEntry";
 import { parseFormulaDocument } from "../formulaOutline/formulaParser";
+import * as yaml from "js-yaml";
+import { evaluateYamlDocument } from "../engine/yamlEngine";
 import {
   InteractiveFormulaEngine,
   buildInteractiveFormulaEntries,
@@ -106,7 +108,7 @@ function isYamlEditor(editor: vscode.TextEditor | undefined): editor is vscode.T
 }
 
 function isFormulaLikeEntry(entry: CoreFormulaEntry): boolean {
-  return Boolean(entry.formula) || entry.valueYaml !== undefined || entry.valueCalc !== undefined;
+  return Boolean(entry.formula) || entry.valueYaml !== undefined || entry.valueYamlList !== undefined || entry.valueCalc !== undefined;
 }
 
 function cloneStateWithFormulaEntries(
@@ -133,23 +135,65 @@ function buildTransientYamlEntries(
   state: CalcDocsState
 ): CoreFormulaEntry[] {
   const relativePath = path.relative(state.workspaceRoot, editor.document.uri.fsPath);
-  const outline = parseFormulaDocument(
-    editor.document.getText().split(/\r?\n/),
-    relativePath
-  );
+  const rawText = editor.document.getText();
+  const outline = parseFormulaDocument(rawText.split(/\r?\n/), relativePath);
 
-  return outline.map((formula): CoreFormulaEntry => ({
-    key: formula.id,
-    unit: formula.unit || undefined,
-    formula: formula.expr || undefined,
-    exprType: formula.expr ? "expr" : "const",
-    steps: [],
-    labels: [],
-    valueYaml: formula.value,
-    valueCalc: formula.value ?? null,
-    _filePath: relativePath,
-    _line: formula.lineStart,
-  }));
+  // Try to evaluate the transient YAML to obtain ranges/tolerance propagation
+  let evaluatedSymbols: Map<string, any> | undefined = undefined;
+  try {
+    const parsedRoot = yaml.load(rawText) as Record<string, unknown> | undefined;
+    if (parsedRoot && typeof parsedRoot === "object") {
+      const evalResult = evaluateYamlDocument(parsedRoot, {
+        rawText,
+        yamlPath: editor.document.uri.fsPath,
+        externalValues: state.symbolValues,
+        externalUnits: state.symbolUnits,
+        csvTables: state.csvTables,
+      });
+      evaluatedSymbols = evalResult.symbols;
+    }
+  } catch {
+    // ignore evaluation errors for transient parse - keep entries basic
+  }
+
+  return outline.map((formula): CoreFormulaEntry => {
+    const evaluated = evaluatedSymbols?.get(formula.id as string);
+    const entry: CoreFormulaEntry = {
+      key: formula.id,
+      unit: formula.unit || undefined,
+      formula: formula.expr || undefined,
+      exprType: formula.expr ? "expr" : "const",
+      steps: [],
+      labels: [],
+      valueYaml: formula.value,
+      valueYamlList: formula.values,
+      valueCalc: evaluated && typeof evaluated.value === "number" ? evaluated.value : (formula.value ?? null),
+      _filePath: relativePath,
+      _line: formula.lineStart,
+    };
+
+    if (evaluated) {
+      if (evaluated.errors && evaluated.errors.length) {
+        entry.evaluationErrors = [...evaluated.errors];
+      }
+      if (evaluated.warnings && evaluated.warnings.length) {
+        entry.evaluationWarnings = [...evaluated.warnings];
+      }
+      if (evaluated.range) {
+        entry.toleranceResult = {
+          min: evaluated.range.min,
+          max: evaluated.range.max,
+          source: evaluated.range.source,
+          tol: evaluated.range.tol,
+          nominalValue: evaluated.range.nominalValue,
+          mode: evaluated.range.mode,
+          sigma: evaluated.range.sigma,
+        } as any;
+      }
+    }
+
+    return entry;
+  });
 }
 
 function buildInlineEntries(

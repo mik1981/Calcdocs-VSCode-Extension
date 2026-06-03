@@ -7,6 +7,13 @@ import {
   FORMULA_LABEL_VALUES,
   type FormulaLabel,
 } from "../types/FormulaEntry";
+import {
+  getYamlTopLevelLine,
+  normalizeFormulaYamlNode,
+  parseFormulaYamlValue,
+} from "./formulaYaml";
+
+export { getYamlTopLevelLine } from "./formulaYaml";
 
 export type LoadedYaml = {
   rawText: string;
@@ -31,18 +38,6 @@ export async function loadYaml(yamlPath: string): Promise<LoadedYaml> {
 }
 
 /**
- * Finds the line where a top-level key is declared.
- * Example: in "PRESSURE_DROP:", key "PRESSURE_DROP" returns that line index.
- */
-export function getYamlTopLevelLine(yamlText: string, key: string): number {
-  const lines = yamlText.split(/\r?\n/);
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const keyRegex = new RegExp(`^\\s*${escapedKey}\\s*:\\s*(#.*)?$`);
-
-  return lines.findIndex((line) => keyRegex.test(line));
-}
-
-/**
  * Builds a normalized formula entry from one YAML node.
  * Keeps source location metadata for navigation and write-back operations.
  */
@@ -60,36 +55,21 @@ export function buildFormulaEntry(
       : [];
   const labels = normalizeLabels(rawLabels);
 
-  const rawValue = node.value;
-  let valueYaml: number | undefined;
-  let unitFromValue: string | undefined;
-
-  if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
-    valueYaml = rawValue;
-  } else if (typeof rawValue === "string") {
-    const trimmed = rawValue.trim();
-    const match = trimmed.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-z%][A-Za-z0-9_%]*)$/);
-    if (match) {
-      valueYaml = Number(match[1]);
-      unitFromValue = match[2];
-    } else {
-      const numeric = Number(trimmed);
-      if (Number.isFinite(numeric)) {
-        valueYaml = numeric;
-      }
-    }
-  }
-
-  const unit = typeof node.unit === "string" ? node.unit : unitFromValue;
+  const parsedValue = parseFormulaYamlValue(node.value);
+  const normalized = normalizeFormulaYamlNode(key, node, yamlRawText, yamlPath);
+  const unit = typeof node.unit === "string" ? node.unit : normalized.unit;
 
   return {
     key,
     unit,
-    formula: typeof node.formula === "string" ? node.formula : undefined,
+    formula: normalized.expr || undefined,
     steps: Array.isArray(node.steps) ? node.steps.map(String) : [],
     labels,
     revision: typeof node.revision === "string" ? node.revision : undefined,
-    valueYaml,
+    valueYaml: parsedValue.value,
+    valueYamlList: parsedValue.values,
+    parameters: normalized.parameters,
+    tolerance: normalized.tolerance,
     expanded: undefined,
     valueCalc: null,
     _filePath: path.relative(workspaceRoot, yamlPath),

@@ -11,10 +11,12 @@ import {
   formatGhostNumber,
 } from '../formulaOutline/formulaEvaluator';
 import { createCsvLookupResolver } from '../engine/csvLookup';
+import { RESERVED_EXPRESSION_NAMES } from '../engine/mathScope';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const RESERVED = new Set([
+  ...RESERVED_EXPRESSION_NAMES,
   'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'sqrt', 'abs',
   'min', 'max', 'pow', 'floor', 'ceil', 'round', 'log', 'log10', 'exp',
   'pi', 'e', 'deg2rad', 'rad2deg', 'csv', 'table', 'lookup',
@@ -93,6 +95,9 @@ function buildSection(
   const knownValues = new Map<string, unknown>([
     ...cSymbols,
     ...symbolTable,
+    ...formulas
+      .filter((formula) => formula.values)
+      .map((formula) => [formula.id, formula.values] as [string, unknown]),
   ]);
 
   let section = `\n/* ============================================================\n`;
@@ -103,7 +108,14 @@ function buildSection(
     const idUpper = f.id.toUpperCase();
     const unitComment = f.unit ? `  /* [${f.unit}] */` : '';
 
-    const evalResult = resolveFormulaValue(f, symbolTable, cSymbols, lookupResolver);
+    if (f.values) {
+      const values = f.values.map((value) => formatGhostNumber(value)).join(', ');
+      section += `/* Table: ${f.id}${f.unit ? ` [${f.unit}]` : ''} */\n`;
+      section += `static const double ${idUpper}[] = { ${values} };${unitComment}\n\n`;
+      continue;
+    }
+
+    const evalResult = resolveFormulaValue(f, symbolTable, cSymbols, lookupResolver, formulas);
     const resolvedValue =
       evalResult.resolved !== null
         ? scaleValueToUnit(evalResult.resolved, f.unit)
@@ -143,7 +155,9 @@ function buildSection(
     }
 
     // Standard expression: try to expand with known symbols
-    const unknownParams = extractUnknownParams(f.expr, knownValues);
+    const unknownParams = f.parameters?.length
+      ? f.parameters
+      : extractUnknownParams(f.expr, knownValues);
 
     if (unknownParams.length === 0) {
       // Fully resolved — prefer numeric result, fall back to expression

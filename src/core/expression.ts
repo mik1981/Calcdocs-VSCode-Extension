@@ -1,6 +1,7 @@
 import { OP_RX, NUM_LITERAL_RX, TOKEN_RX } from "../utils/regex";
 import { stripComments } from "../utils/text";
 import { evaluateExpression } from "../engine/evaluator";
+import { ENGINEERING_MATH_SCOPE } from "../engine/mathScope";
 import {
   createQuantity,
   createQuantityFromData,
@@ -135,8 +136,6 @@ type EvalScopeValue =
   | ((...args: unknown[]) => number)
   | object;
 
-const DEG_TO_RAD = Math.PI / 180;
-const RAD_TO_DEG = 180 / Math.PI;
 const MAX_MACRO_EXPANSION_DEPTH = 12;
 // Hard stop for recursive symbol resolution to avoid JS stack overflow.
 const MAX_SYMBOL_RESOLUTION_DEPTH = 96;
@@ -287,49 +286,7 @@ const C_CAST_SCOPE: Record<string, EvalScopeValue> = {
 const BASE_MATH_SCOPE: Record<string, EvalScopeValue> = {
   ...C_CAST_SCOPE,
   Math,
-  abs: Math.abs,
-  acos: Math.acos,
-  acosh: Math.acosh,
-  asin: Math.asin,
-  asinh: Math.asinh,
-  atan: Math.atan,
-  atan2: Math.atan2,
-  atanh: Math.atanh,
-  cbrt: Math.cbrt,
-  ceil: Math.ceil,
-  cos: Math.cos,
-  cosh: Math.cosh,
-  exp: Math.exp,
-  expm1: Math.expm1,
-  floor: Math.floor,
-  hypot: Math.hypot,
-  ln: Math.log,
-  log: Math.log,
-  log10: Math.log10,
-  log2: Math.log2,
-  max: Math.max,
-  min: Math.min,
-  pow: Math.pow,
-  round: Math.round,
-  sign: Math.sign,
-  sin: Math.sin,
-  sinh: Math.sinh,
-  sqrt: Math.sqrt,
-  tan: Math.tan,
-  tanh: Math.tanh,
-  trunc: Math.trunc,
-  fabs: Math.abs,
-  pi: Math.PI,
-  tau: Math.PI * 2,
-  e: Math.E,
-  deg2rad: (value: number) => value * DEG_TO_RAD,
-  rad2deg: (value: number) => value * RAD_TO_DEG,
-  sind: (value: number) => Math.sin(value * DEG_TO_RAD),
-  cosd: (value: number) => Math.cos(value * DEG_TO_RAD),
-  tand: (value: number) => Math.tan(value * DEG_TO_RAD),
-  asind: (value: number) => Math.asin(value) * RAD_TO_DEG,
-  acosd: (value: number) => Math.acos(value) * RAD_TO_DEG,
-  atand: (value: number) => Math.atan(value) * RAD_TO_DEG,
+  ...ENGINEERING_MATH_SCOPE,
 };
 
 const MATH_SCOPE = addUppercaseAliases(BASE_MATH_SCOPE);

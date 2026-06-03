@@ -25,8 +25,6 @@ import { preprocessExpression } from '../engine/evaluator';
 import { formatNumberToSigFigs } from '../utils/nformat';
 import {
   UNIT_ALIASES,
-  UNIT_SPECS,
-  SCALABLE_UNIT_FAMILY,
   UNIT_SCALE_FACTORS,
   convertSiToUnit,
   createQuantity,
@@ -35,7 +33,7 @@ import {
   normalizeUnitToken,
   parseUnitToQuantity,
 } from '../engine/units';
-import { inferDimension, dimToString } from './dimensionEvaluator';
+import { ENGINEERING_MATH_SCOPE } from '../engine/mathScope';
 
 function levenshtein(a: string, b: string): number {
   const dp = Array.from({ length: a.length + 1 }, () =>
@@ -69,61 +67,7 @@ export function suggestUnits(unit: string): string[] {
     .map(x => x.k);
 }
 
-// const DEG_TO_RAD = Math.PI / 180;
-const DEG_TO_RAD = Math.PI / 180;
-const RAD_TO_DEG = 180 / Math.PI;
-
-export const MATH_SCOPE: Record<string, unknown> = {
-  // Standard Math passthrough
-  abs:   Math.abs,
-  acos:  Math.acos,
-  acosh: Math.acosh,
-  asin:  Math.asin,
-  asinh: Math.asinh,
-  atan:  Math.atan,
-  atan2: Math.atan2,
-  atanh: Math.atanh,
-  cbrt:  Math.cbrt,
-  ceil:  Math.ceil,
-  cos:   Math.cos,
-  cosh:  Math.cosh,
-  exp:   Math.exp,
-  floor: Math.floor,
-  hypot: Math.hypot,
-  ln:    Math.log,
-  log:   Math.log,
-  log10: Math.log10,
-  log2:  Math.log2,
-  max:   Math.max,
-  min:   Math.min,
-  pow:   Math.pow,
-  round: Math.round,
-  sign:  Math.sign,
-  sin:   Math.sin,
-  sinh:  Math.sinh,
-  sqrt:  Math.sqrt,
-  tan:   Math.tan,
-  tanh:  Math.tanh,
-  trunc: Math.trunc,
-  fabs:  Math.abs,
-
-  // Constants
-  pi:  Math.PI,
-  PI:  Math.PI,
-  tau: Math.PI * 2,
-  e:   Math.E,
-  E:   Math.E,
-
-  // Degree helpers
-  deg2rad: (v: number) => v * DEG_TO_RAD,
-  rad2deg: (v: number) => v * RAD_TO_DEG,
-  sind:    (v: number) => Math.sin(v * DEG_TO_RAD),
-  cosd:    (v: number) => Math.cos(v * DEG_TO_RAD),
-  tand:    (v: number) => Math.tan(v * DEG_TO_RAD),
-  asind:   (v: number) => Math.asin(v) * RAD_TO_DEG,
-  acosd:   (v: number) => Math.acos(v) * RAD_TO_DEG,
-  atand:   (v: number) => Math.atan(v) * RAD_TO_DEG,
-};
+export const MATH_SCOPE: Record<string, unknown> = ENGINEERING_MATH_SCOPE;
 
 // ---------------------------------------------------------------------------
 // Unit system
@@ -188,6 +132,10 @@ export function resolveUnitFactor(unit: string | undefined): number {
  */
 export function scaleValueToUnit(rawValue: number, unit: string | undefined): number {
   if (!unit) return rawValue;
+  const spec = getUnitSpec(unit);
+  if (spec && (spec.toSi || spec.fromSi)) {
+    return rawValue;
+  }
   const converted = convertSiToUnit(rawValue, unit);
   return converted.ok ? converted.value : rawValue;
 }
@@ -202,6 +150,10 @@ export function isKnownUnit(unit: string | undefined): boolean {
 
 function toDeclaredUnitInternalValue(value: number, unit: string | undefined): number {
   if (!unit) return value;
+  const spec = getUnitSpec(unit);
+  if (spec && (spec.toSi || spec.fromSi)) {
+    return value;
+  }
   const quantity = createQuantityFromData(value, unit);
   return quantity.ok ? quantity.value.valueSi : value;
 }
@@ -394,6 +346,8 @@ export type LookupResolver = (
   yamlPath?: string
 ) => number | Quantity;
 
+type FormulaRuntimeScope = Record<string, unknown>;
+
 
 // ---------------------------------------------------------------------------
 // Unit helper for engine-level `preprocessExpression` wrappers.
@@ -439,9 +393,11 @@ function toUnitAwareSiValue(value: unknown, unit: unknown): number {
  */
 export function evaluateFormulaExpression(
   expr: string,
-  vars: Record<string, number>,
+  vars: FormulaRuntimeScope,
   lookupResolver?: LookupResolver,
-  yamlPath?: string
+  yamlPath?: string,
+  formulas?: OutlineFormula[],
+  callStack: Set<string> = new Set()
 ): number | null {
   const trimmed = expr.trim();
   if (!trimmed) return null;
@@ -458,6 +414,57 @@ export function evaluateFormulaExpression(
     scope.csv = (...args: Array<string | number>) => lookupResolver('csv', args, yamlPath);
     scope.table = (...args: Array<string | number>) => lookupResolver('table', args, yamlPath);
     scope.lookup = (...args: Array<string | number>) => lookupResolver('lookup', args, yamlPath);
+  }
+
+  if (formulas) {
+    for (const formula of formulas) {
+      if (!formula.parameters?.length || !formula.expr) {
+        continue;
+      }
+
+      scope[formula.id] = (...args: unknown[]) => {
+        if (args.length !== formula.parameters!.length) {
+          throw new Error(
+            `formula '${formula.id}' expects ${formula.parameters!.length} parameter(s), got ${args.length}`
+          );
+        }
+
+        if (callStack.has(formula.id)) {
+          throw new Error(`recursive formula call '${formula.id}'`);
+        }
+
+        const parameterScope: FormulaRuntimeScope = {};
+        formula.parameters!.forEach((parameter, index) => {
+          const value = args[index];
+          if (typeof value !== "number" || !Number.isFinite(value)) {
+            throw new Error(`parameter '${parameter}' for '${formula.id}' is not numeric`);
+          }
+          parameterScope[parameter] = value;
+        });
+
+        callStack.add(formula.id);
+        const result = evaluateFormulaExpression(
+          formula.expr,
+          {
+            ...vars,
+            ...parameterScope,
+          },
+          lookupResolver,
+          formula._filePath ?? yamlPath,
+          formulas,
+          callStack
+        );
+        callStack.delete(formula.id);
+
+        if (result === null) {
+          throw new Error(`formula '${formula.id}' could not be resolved`);
+        }
+
+        return shouldTagLookupResultWithDeclaredUnit(formula)
+          ? toDeclaredUnitInternalValue(result, formula.unit)
+          : result;
+      };
+    }
   }
 
   const keys = Object.keys(scope);
@@ -511,6 +518,11 @@ export function buildFormulaSymbolTable(
   lookupResolver?: LookupResolver
 ): Map<string, number> {
   const table = new Map<string, number>();
+  const arrayValues = Object.fromEntries(
+    formulas
+      .filter((formula) => formula.values)
+      .map((formula) => [formula.id, formula.values])
+  );
 
   // Seed with deprecated `value:` fields (lowest-priority static constants)
   for (const formula of formulas) {
@@ -524,18 +536,26 @@ export function buildFormulaSymbolTable(
   for (let pass = 0; pass < 2; pass++) {
     for (const formula of formulas) {
       if (table.has(formula.id)) continue; // already resolved
+      if (formula.parameters?.length) continue; // function-like formulas resolve only when called
       if (!formula.expr) continue;
 
-      const vars: Record<string, number> = {
+      const vars: FormulaRuntimeScope = {
         // Layer 1 (lowest): C/C++ macros from state.symbolValues
         ...Object.fromEntries(cSymbols ?? []),
+        ...arrayValues,
         // Layer 2: other formula IDs already resolved in this document
         ...Object.fromEntries(table),
         // Layer 3 (highest): explicit example values for this formula
         ...(formula.example ?? {}),
       };
 
-      const result = evaluateFormulaExpression(formula.expr, vars, lookupResolver, formula._filePath);
+      const result = evaluateFormulaExpression(
+        formula.expr,
+        vars,
+        lookupResolver,
+        formula._filePath,
+        formulas
+      );
       
       if (typeof result === 'number' && Number.isFinite(result)) {
         table.set(
@@ -574,20 +594,33 @@ export function resolveFormulaValue(
   formula: OutlineFormula,
   symbolTable: Map<string, number>,
   cSymbols?: Map<string, number>,
-  lookupResolver?: LookupResolver
+  lookupResolver?: LookupResolver,
+  formulas: OutlineFormula[] = []
 ): { resolved: number | null; source: 'expr' | 'value' | 'none' } {
 
   if (formula.expr) {
-    const vars: Record<string, number> = {
+    const arrayValues = Object.fromEntries(
+      formulas
+        .filter((item) => item.values)
+        .map((item) => [item.id, item.values])
+    );
+    const vars: FormulaRuntimeScope = {
       // Layer 1 (lowest): C/C++ macros
       ...Object.fromEntries(cSymbols ?? []),
+      ...arrayValues,
       // Layer 2: other resolved formula IDs
       ...Object.fromEntries(symbolTable),
       // Layer 3 (highest): this formula's own example values
       ...(formula.example ?? {}),
     };
 
-    const result = evaluateFormulaExpression(formula.expr, vars, lookupResolver, formula._filePath);
+    const result = evaluateFormulaExpression(
+      formula.expr,
+      vars,
+      lookupResolver,
+      formula._filePath,
+      formulas
+    );
 
     if (result !== null) {
       return {

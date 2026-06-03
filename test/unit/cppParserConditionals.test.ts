@@ -259,4 +259,33 @@ describe("engine unit compatibility", () => {
 
     expect(scaleValueToUnit(resolved.resolved, formulas[0].unit)).toBeCloseTo(10000, 9);
   });
+
+  it("keeps formula-outline raw temperature values in declared degC units", () => {
+    const formulas = [
+      {
+        id: "MEASURED_TEMP",
+        value: 25,
+        unit: "degc",
+        lineStart: 0,
+        lineEnd: 2,
+      },
+      {
+        id: "COMPENSATED_OUTPUT",
+        expr: "MEASURED_TEMP * 1.05 + 0.5",
+        unit: "degc",
+        lineStart: 3,
+        lineEnd: 5,
+      },
+    ];
+
+    const symbolTable = buildFormulaSymbolTable(formulas);
+
+    const measured = resolveFormulaValue(formulas[0], symbolTable);
+    expect(measured.resolved).toBeCloseTo(25, 9);
+    expect(scaleValueToUnit(measured.resolved!, formulas[0].unit)).toBeCloseTo(25, 9);
+
+    const compensated = resolveFormulaValue(formulas[1], symbolTable, undefined, undefined, formulas);
+    expect(compensated.resolved).toBeCloseTo(26.75, 9);
+    expect(scaleValueToUnit(compensated.resolved!, formulas[1].unit)).toBeCloseTo(26.75, 9);
+  });
 });

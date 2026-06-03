@@ -1,1 +1,5 @@
+# Case 08 Real World Mix (placeholder dataset)
+# This case is used as a minimal fixture to validate that the engine can load a mixed real-world project structure.
+# The actual meaningful evaluations happen in other parts of the showcase pipeline.
 dummy: { value: 1 }
+

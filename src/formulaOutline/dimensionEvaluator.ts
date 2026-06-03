@@ -1,6 +1,9 @@
 // dimensionEvaluator.ts
 
 import type { OutlineFormula } from './formulaParser';
+import { parseExpression, type ExpressionNode } from '../engine/ast';
+import { preprocessExpression } from '../engine/evaluator';
+import { isLookupFunctionName } from '../engine/mathScope';
 import {
   type DimensionVector as Dim,
   dimensionsEqual as sameDim,
@@ -51,41 +54,30 @@ export function buildCSymbolDimTable(
   return map;
 }
 
-// -------------------- TOKENIZER --------------------
-
-type Token =
-  | { type: 'var'; v: string }
-  | { type: 'op'; v: string }
-  | { type: 'num' }
-  | { type: 'func'; v: string }
-  | { type: 'paren'; v: string };
-
-function tokenize(expr: string): Token[] {
-  // const regex = /([A-Z_][A-Z0-9_]*)|(sqrt|sin|cos|tan|pow)|(\d+(\.\d+)?)|([+\-*/(),])/gi;
-  const regex = /([A-Z_][A-Z0-9_]*)|(csv|lookup|table|sqrt|sin|cos|tan|pow)|(\d+(\.\d+)?)|([+\-*/(),])/gi;
-
-  const tokens: Token[] = [];
-
-  let m;
-  while ((m = regex.exec(expr)) !== null) {
-    if (m[1]) tokens.push({ type: 'var', v: m[1] });
-    else if (m[2]) tokens.push({ type: 'func', v: m[2] });
-    else if (m[3]) tokens.push({ type: 'num' });
-    else tokens.push({ type: 'op', v: m[5] });
-  }
-
-  return tokens;
-}
-
 // -------------------- FUNCTION RULES --------------------
 
 function applyFunction(name: string, args: Dim[]): Dim {
-  const d = args[0];
+  const d = args[0] ?? ZERO_DIM;
   switch (name) {
+    case 'abs':
+    case 'ass':
+    case 'fabs':
+    case 'int':
+    case 'integer':
+    case 'ceil':
+    case 'floor':
+    case 'round':
+    case 'trunc':
+    case 'min':
+    case 'max':
+    case 'hypot':
+      return d;
+
     case 'sqrt':
       return { M: d.M / 2, L: d.L / 2, T: d.T / 2, I: d.I / 2, K: d.K / 2 };
 
     case 'pow':
+    case 'power':
       // pow(x, n) → dimension x^n
       const power = args[1] ? 2 : 1; // fallback
       return { M: d.M * power, L: d.L * power, T: d.T * power, I: d.I * power, K: d.K * power };
@@ -93,6 +85,16 @@ function applyFunction(name: string, args: Dim[]): Dim {
     case 'sin':
     case 'cos':
     case 'tan':
+    case 'asin':
+    case 'acos':
+    case 'atan':
+    case 'atan2':
+    case 'ln':
+    case 'log':
+    case 'log10':
+    case 'log2':
+    case 'exp':
+    case 'sign':
       return ZERO_DIM;
 
     default:
@@ -107,66 +109,96 @@ export function inferDimension(
   formulas: OutlineFormula[],
   declaredUnit?: string
 ): { dim: Dim | null; error?: string } {
+  try {
+    const ast = parseExpression(preprocessExpression(expr));
+    return { dim: inferNodeDimension(ast, formulas, declaredUnit) };
 
-  const tokens = tokenize(expr);
-  const stack: Dim[] = [];
-  const ops: string[] = [];
+  } catch (e: any) {
+    return { dim: null, error: e.message };
+  }
+}
 
+function inferNodeDimension(
+  node: ExpressionNode,
+  formulas: OutlineFormula[],
+  declaredUnit?: string
+): Dim {
   const getVarDim = (name: string): Dim => {
     const f = formulas.find(f => f.id === name);
     return getUnitDim(f?.unit) ?? ZERO_DIM;
   };
 
-  function applyOp() {
-    const b = stack.pop();
-    const a = stack.pop();
-    const op = ops.pop();
-
-    if (!a || !b || !op) return;
-
-    if (op === '+' || op === '-') {
-      if (!sameDim(a, b)) throw new Error('ADD_MISMATCH');
-      stack.push(a);
-    }
-
-    if (op === '*') stack.push(multiplyDimensions(a, b));
-    if (op === '/') stack.push(divideDimensions(a, b));
-  }
-
-  try {
-    const EXTERNAL_FUNCS = new Set(['csv', 'lookup', 'table']);
-
-    for (const t of tokens) {
-      if (t.type === 'var') stack.push(getVarDim(t.v));
-      else if (t.type === 'num') stack.push(ZERO_DIM);
-      else if (t.type === 'op') {
-        while (ops.length) applyOp();
-        ops.push(t.v);
+  switch (node.kind) {
+    case "number":
+    case "string":
+      return ZERO_DIM;
+    case "identifier":
+      return getVarDim(node.name);
+    case "unary":
+      return inferNodeDimension(node.argument, formulas, declaredUnit);
+    case "index":
+      if (node.target.kind === "identifier") {
+        return getVarDim(node.target.name);
       }
-      else if (t.type === 'func') {
-        if (EXTERNAL_FUNCS.has(t.v.toLowerCase())) {
-          const dim = declaredUnit
-            ? getUnitDim(declaredUnit)
-            : ZERO_DIM;
+      return ZERO_DIM;
+    case "binary": {
+      const left = inferNodeDimension(node.left, formulas, declaredUnit);
+      const right = inferNodeDimension(node.right, formulas, declaredUnit);
 
-          stack.push(dim ?? ZERO_DIM);
-        } else {
-          const arg = stack.pop();
-          if (arg) stack.push(applyFunction(t.v, [arg]));
+      if (node.operator === "+" || node.operator === "-" || node.operator === "%") {
+        if (!sameDim(left, right) && !(node.operator === "%" && sameDim(right, ZERO_DIM))) {
+          throw new Error("ADD_MISMATCH");
         }
-        // const arg = stack.pop();
-        // if (!arg) continue;
-        // stack.push(applyFunction(t.v, [arg]));
+        return left;
       }
+
+      if (node.operator === "*") {
+        return multiplyDimensions(left, right);
+      }
+
+      if (node.operator === "/") {
+        return divideDimensions(left, right);
+      }
+
+      if (node.operator === "^") {
+        const exponent = numericLiteralValue(node.right) ?? 1;
+        return scaleDim(left, exponent);
+      }
+
+      return ZERO_DIM;
     }
+    case "call": {
+      const normalized = node.callee.toLowerCase();
+      if (isLookupFunctionName(normalized)) {
+        return declaredUnit ? getUnitDim(declaredUnit) ?? ZERO_DIM : ZERO_DIM;
+      }
 
-    while (ops.length) applyOp();
+      const formula = formulas.find((item) => item.id === node.callee);
+      if (formula) {
+        return getUnitDim(formula.unit) ?? ZERO_DIM;
+      }
 
-    return { dim: stack[0] ?? null };
-
-  } catch (e: any) {
-    return { dim: null, error: e.message };
+      const args = node.args.map((arg) => inferNodeDimension(arg, formulas, declaredUnit));
+      return applyFunction(normalized, args);
+    }
   }
+}
+
+function numericLiteralValue(node: ExpressionNode): number | undefined {
+  if (node.kind === "number") {
+    return node.value;
+  }
+
+  if (node.kind === "unary") {
+    const value = numericLiteralValue(node.argument);
+    return value === undefined ? undefined : node.operator === "-" ? -value : value;
+  }
+
+  return undefined;
+}
+
+function scaleDim(d: Dim, factor: number): Dim {
+  return { M: d.M * factor, L: d.L * factor, T: d.T * factor, I: d.I * factor, K: d.K * factor };
 }
 
 // -------------------- DEBUG --------------------

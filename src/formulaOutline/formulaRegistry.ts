@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { TextDocument } from 'vscode';
 import type { OutlineFormula } from './formulaParser';
 import { parseFormulaDocument } from './formulaParser';
+import { isFormulaYamlFileName } from '../core/formulaYaml';
 
 export class FormulaRegistry {
   private formulas = new Map<string, OutlineFormula[]>(); // uri -> formulas[]
@@ -32,8 +33,7 @@ export class FormulaRegistry {
   }
 
   private isFormulaFile(doc: TextDocument): boolean {
-    const name = doc.fileName.toLowerCase();
-    return doc.languageId === 'yaml' && /.*formulas.*\.yaml$/i.test(name);
+    return doc.languageId === 'yaml' && isFormulaYamlFileName(doc.fileName);
   }
 
   async getFormulas(uri: string): Promise<OutlineFormula[]> {

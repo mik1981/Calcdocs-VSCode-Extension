@@ -3,6 +3,8 @@ export const FORMULA_LABEL_VALUES = [
   "table_lookup",
 ] as const
 
+export type TolMode = "worst_case" | "rss" | "gaussian";
+
 export type FormulaLabel = (typeof FORMULA_LABEL_VALUES)[number]
 
 export type FormulaEntry = {
@@ -15,6 +17,25 @@ export type FormulaEntry = {
   revision?: string
 
   valueYaml?: number
+  valueYamlList?: number[]
+  parameters?: string[]
+  tolerance?: {
+    min?: number
+    max?: number
+    tol?: number
+    mode?: TolMode
+    sigma?: number
+    parameters: Record<string, { min?: number; max?: number; tol?: number; mode?: TolMode; sigma?: number }>
+  }
+  toleranceResult?: {
+    min: number
+    max: number
+    source: "declared" | "propagated"
+    tol?: number
+    nominalValue?: number
+    mode?: TolMode
+    sigma?: number
+  }
   expanded?: string
   resolvedDependencies?: string[]
   valueCalc?: number | null

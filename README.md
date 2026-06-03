@@ -1,4 +1,4 @@
-# 🧮 CalcDocs — Instantly See What Your Firmware REALLY Computes
+# 🧮 CalcDocs — Instantly See What Your Firmware REALLY Computes [0.3.2-*prerelease*]
 
 <p align="center">
   <b>Reveal hidden firmware values directly inside VS Code.</b><br>
@@ -43,6 +43,9 @@ No debugger.
 ---
 
 ## ⚡ 5-second demo
+
+---
+
 
 ## 1️⃣ Coding Evaluator
 
@@ -115,6 +118,7 @@ The same engineering logic can now:
 ✅ be reused during debugging  
 ✅ propagate through dependencies automatically  
 ✅ stay permanently aligned with the firmware implementation  
+✅ can also propagate **tolerances** (e.g. `tol`, `min`/`max`) through your YAML formula dependency graph to compute final **min/max ranges**.
 
 No duplicated engineering logic.  
 No spreadsheet drift.  
@@ -332,6 +336,7 @@ Full documentation available on GitHub:
 - 👉 [Contributing](https://github.com/mik1981/Calcdocs-VSCode-Extension/blob/main/docs/contributing.md)
 - 👉 [Inline Calculations](https://github.com/mik1981/Calcdocs-VSCode-Extension/blob/main/docs/inline-calculations.md)
 - 👉 [Interactive Formula Viewer](https://github.com/mik1981/Calcdocs-VSCode-Extension/blob/main/docs/interactive-formula-viewer.md)
+- 👉 [Tolerance propagation & formula ranges](https://github.com/mik1981/Calcdocs-VSCode-Extension/blob/main/docs/tolerance-and-ranges.md)
 
 ---
 

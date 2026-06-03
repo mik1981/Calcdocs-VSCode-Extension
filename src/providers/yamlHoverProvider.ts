@@ -5,6 +5,33 @@ import type { CalcDocsState } from "../core/state";
 import { pickWord } from "../utils/editor";
 import { buildCopyLink } from "../utils/hoverActions";
 
+function buildTolModeLabel(tr: {
+  source: string;
+  mode?: string;
+  sigma?: number;
+  tol?: number;
+}): string {
+  if (tr.source === "declared" && tr.tol !== undefined) {
+    const modeTag = tr.mode && tr.mode !== "worst_case"
+      ? ` · ${tr.mode}${tr.mode === "gaussian" ? ` ${tr.sigma ?? 3}σ` : ""}`
+      : "";
+    return `*(±${tr.tol}%${modeTag})*`;
+  }
+
+  if (tr.source === "propagated") {
+    switch (tr.mode) {
+      case "rss":
+        return `*(propagated · RSS)*`;
+      case "gaussian":
+        return `*(propagated · gaussian ${tr.sigma ?? 3}σ)*`;
+      default:
+        return `*(propagated · worst-case)*`;
+    }
+  }
+
+  return `*(${tr.source})*`;
+}
+
 function buildYamlHoverMarkdown(state: CalcDocsState, symbol: string): vscode.MarkdownString {
   const entry = state.formulaIndex.get(symbol);
   const lines: string[] = [];
@@ -26,6 +53,13 @@ function buildYamlHoverMarkdown(state: CalcDocsState, symbol: string): vscode.Ma
   const unitToShow = entry.unit && !/^[MLTIK]/.test(entry.unit) ? entry.unit : undefined;
   if (unitToShow) {
     lines.push(`- Unit: \`${unitToShow}\``);
+  }
+
+  if (entry.toleranceResult) {
+    const tr = entry.toleranceResult;
+    const rangeStr = `\`${formatPreviewNumber(state, tr.min)} .. ${formatPreviewNumber(state, tr.max)}\``;
+    const modeLabel = buildTolModeLabel(tr);
+    lines.push(`- Range: ${rangeStr}  ${modeLabel}`);
   }
 
   if (entry.exprType) {

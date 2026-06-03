@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.2] - 06/03/2026
+
+- Added tolerance propagation in the interactive formula viewer
+- Updated documentation to include new formula file fields for managing component and formula tolerances
+- Added support for table arrays in formula files
+- Removed line decorations in the CalcDocs Formulas Explorer to improve clarity; lines are still visible on hover
+- Fixed an error occurring when adding a unit to a raw value
+
+### Upcoming Features:
+
+- Visual dependency graph
+- Fixed-point Analyzer (Q15/Q31)
+- Tolerance model rss and gaussian
+- Table formula support
+
 ## [0.3.1] - 05/27/2026
 
 - Extended inline calculations to support structures composed of @var = ... forms
@@ -7,15 +22,6 @@
 - Fixed bitfield fallback decoder handling across all entries
 - Added ghost values support for .h files
 - Added enum ghost values resolution support
-
-### Upcoming Features:
-
-- Visual dependency graph
-- Fixed-point Analyzer (Q15/Q31)
-- Unified formula and unit parser
-- Formula tolerance evluator
-- Table formula support
-- Generic formula reuse via predefined parameters
 
 ## [0.3.0] - 05/26/2026
 
