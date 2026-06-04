@@ -1,6 +1,10 @@
 import * as vscode from "vscode";
+import * as path from "path";
 
-import { collectDocumentSymbolDefinitions } from "./documentSymbols";
+import {
+  collectDocumentSymbolDefinitions,
+  collectDocumentSymbolDefinitionsInLineRanges,
+} from "./documentSymbols";
 import { 
   isCompositeExpression, 
   unwrapParens, 
@@ -16,9 +20,12 @@ import {
   formatPreviewNumber,
 } from "./preview";
 import { CalcDocsState } from "./state";
+import type { ViewportLineRange } from "./viewport";
+import { lineInViewportRanges } from "./viewport";
 
 const CODELENS_PREVIEW_MAX_LEN = 140;
 const MISMATCH_THRESHOLD = 0.01;
+const IDENTIFIER_RX = /\b[A-Za-z_]\w*\b/g;
 
 export type CppCodeLensItemKind =
   | "ambiguity"
@@ -36,6 +43,10 @@ export type CppCodeLensItem = {
   kind: CppCodeLensItemKind;
   command?: string;
   arguments?: unknown[];
+};
+
+export type CollectCppCodeLensItemsOptions = {
+  lineRanges?: readonly ViewportLineRange[];
 };
 
 function createInfoItem(
@@ -193,6 +204,98 @@ function findWordBoundary(
   return -1;
 }
 
+function normalizePathForCompare(value: string): string {
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function isSymbolLocationInDocument(
+  document: vscode.TextDocument,
+  state: CalcDocsState,
+  relativeFile: string
+): boolean {
+  if (document.uri.scheme !== "file") {
+    return false;
+  }
+
+  const documentPath = normalizePathForCompare(document.uri.fsPath);
+  const symbolPath = normalizePathForCompare(
+    path.isAbsolute(relativeFile)
+      ? relativeFile
+      : path.join(state.workspaceRoot, relativeFile)
+  );
+
+  return documentPath === symbolPath;
+}
+
+function collectStateBackedVisibleSymbolItems(
+  document: vscode.TextDocument,
+  state: CalcDocsState,
+  remainingSlots: number,
+  occupiedLines: Set<number>,
+  lineRanges: readonly ViewportLineRange[]
+): CppCodeLensItem[] {
+  if (!state.cppCodeLens.showResolvedValue || remainingSlots <= 0) {
+    return [];
+  }
+
+  const items: CppCodeLensItem[] = [];
+  const seenLineSymbols = new Set<string>();
+
+  for (const range of lineRanges) {
+    for (let line = range.startLine; line <= range.endLine; line += 1) {
+      if (items.length >= remainingSlots) {
+        return items;
+      }
+
+      if (line < 0 || line >= document.lineCount || occupiedLines.has(line)) {
+        continue;
+      }
+
+      const lineText = document.lineAt(line).text;
+      IDENTIFIER_RX.lastIndex = 0;
+
+      for (const match of lineText.matchAll(IDENTIFIER_RX)) {
+        if (items.length >= remainingSlots) {
+          return items;
+        }
+
+        const name = match[0];
+        const seenKey = `${line}:${name}`;
+        if (seenLineSymbols.has(seenKey)) {
+          continue;
+        }
+
+        seenLineSymbols.add(seenKey);
+
+        const location = state.symbolDefs.get(name);
+        const value = state.symbolValues.get(name);
+        if (
+          !location ||
+          typeof value !== "number" ||
+          !Number.isFinite(value) ||
+          location.line !== line + 1 ||
+          !isSymbolLocationInDocument(document, state, location.file)
+        ) {
+          continue;
+        }
+
+        items.push(
+          createInfoItem(
+            line,
+            `CalcDocs: ${name} = ${formatPreviewNumber(state, value)}`,
+            "resolvedValue"
+          )
+        );
+        occupiedLines.add(line);
+        break;
+      }
+    }
+  }
+
+  return items;
+}
+
 /**
  * Collect CodeLens items for every resolvable enum entry found in `document`.
  * Only emits items when `state.cppCodeLens.showResolvedValue` is true.
@@ -306,12 +409,16 @@ function collectEnumItems(
 export function collectCppCodeLensItems(
   document: vscode.TextDocument,
   state: CalcDocsState,
-  maxItemsPerFile: number
+  maxItemsPerViewport: number,
+  options: CollectCppCodeLensItemsOptions = {}
 ): CppCodeLensItem[] {
-  const maxItems = Math.max(1, maxItemsPerFile);
+  const maxItems = Math.max(1, maxItemsPerViewport);
   const items: CppCodeLensItem[] = [];
   const renderedAmbiguityLens = new Set<string>();
-  const definitions = collectDocumentSymbolDefinitions(document.getText());
+  const lineRanges = options.lineRanges?.length ? options.lineRanges : undefined;
+  const definitions = lineRanges
+    ? collectDocumentSymbolDefinitionsInLineRanges(document, lineRanges)
+    : collectDocumentSymbolDefinitions(document.getText());
 
   const pushItem = (item: CppCodeLensItem): boolean => {
     if (items.length >= maxItems) {
@@ -498,7 +605,15 @@ export function collectCppCodeLensItems(
   // line already claimed by a #define / variable / function-call item.
   if (items.length < maxItems) {
     const occupiedLines = new Set(items.map((i) => i.line));
-    const enumItems = collectEnumItems(
+    const enumItems = lineRanges
+      ? collectStateBackedVisibleSymbolItems(
+          document,
+          state,
+          maxItems - items.length,
+          occupiedLines,
+          lineRanges
+        ).filter((item) => lineInViewportRanges(item.line, lineRanges))
+      : collectEnumItems(
       document,
       state,
       maxItems - items.length,

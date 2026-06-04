@@ -29,6 +29,7 @@ import type {
   FormulaInputNode,
   FormulaTreeNode,
 } from "./webview-types";
+import { runMonteCarlo, distributionFromTolerance, type McInput } from "../engine/monteCarlo";
 
 export const MAX_INTERACTIVE_DEPTH = 5;
 
@@ -535,6 +536,30 @@ export class InteractiveFormulaEngine {
         mode: tolMode,
         sigma: tolSigma,
       };
+
+    } else {
+      // RSS or Gaussian → Monte Carlo
+      const mcInputs: McInput[] = inputRanges.map(r => ({
+        name: r.name,
+        distribution: distributionFromTolerance(
+          tolMode,
+          r.min, r.max,
+          (r.min + r.max) / 2,
+          tolSigma
+        ),
+      }));
+
+      const mcResult = runMonteCarlo(mcInputs, evalAtPoint as any, { nSamples: 10_000 });
+
+      if (Number.isFinite(mcResult.mean)) {
+        return {
+          min: mcResult.p025,
+          max: mcResult.p975,
+          source: "propagated",
+          mode: tolMode,
+          sigma: tolSigma,
+        };
+      }
     }
 
     // RSS / gaussian

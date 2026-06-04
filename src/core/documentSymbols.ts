@@ -1,9 +1,11 @@
 import { parseCppSymbolDefinition, type CppSymbolDefinition } from "./cppParser";
 import { updateBraceDepth } from "../utils/braceDepth";
 import { stripComments } from "../utils/text";
+import type { LineTextSource, ViewportLineRange } from "./viewport";
 
 export const DEFINE_DIRECTIVE_RX = /^\s*#\s*define\b/;
 const CONTROL_FLOW_RX = /^\s*(if|while|for|switch|return|do)\b/;
+const MAX_LOGICAL_LINE_CONTINUATION_LINES = 128;
 
 export type DocumentSymbolDefinition = {
   line: number;
@@ -54,6 +56,48 @@ function isStatementIncomplete(text: string): boolean {
   return false;
 }
 
+function normalizeLineRanges(
+  lineCount: number,
+  lineRanges: readonly ViewportLineRange[] | undefined
+): ViewportLineRange[] {
+  if (!lineRanges || lineRanges.length === 0 || lineCount <= 0) {
+    return [];
+  }
+
+  const normalized = lineRanges
+    .map((range) => ({
+      startLine: Math.max(0, Math.min(lineCount - 1, range.startLine)),
+      endLine: Math.max(0, Math.min(lineCount - 1, range.endLine)),
+    }))
+    .filter((range) => range.startLine <= range.endLine)
+    .sort((left, right) => left.startLine - right.startLine);
+
+  const merged: ViewportLineRange[] = [];
+
+  for (const range of normalized) {
+    const previous = merged[merged.length - 1];
+    if (!previous || range.startLine > previous.endLine + 1) {
+      merged.push({ ...range });
+      continue;
+    }
+
+    previous.endLine = Math.max(previous.endLine, range.endLine);
+  }
+
+  return merged;
+}
+
+function isLineInRanges(line: number, ranges: readonly ViewportLineRange[]): boolean {
+  return ranges.some((range) => line >= range.startLine && line <= range.endLine);
+}
+
+function findNextRangeStart(
+  line: number,
+  ranges: readonly ViewportLineRange[]
+): number | undefined {
+  return ranges.find((range) => range.startLine > line)?.startLine;
+}
+
 /**
  * Collects C/C++ declarations parsed by parseCppSymbolDefinition.
  * Supports both top-level and local declarations to drive inline ghost values.
@@ -65,17 +109,51 @@ export function collectDocumentSymbolDefinitions(
   documentText: string
 ): DocumentSymbolDefinition[] {
   const lines = documentText.split(/\r?\n/);
+  return collectDocumentSymbolDefinitionsFromLineSource({
+    lineCount: lines.length,
+    lineAt: (line: number) => ({ text: lines[line] ?? "" }),
+  });
+}
+
+export function collectDocumentSymbolDefinitionsInLineRanges(
+  source: LineTextSource,
+  lineRanges: readonly ViewportLineRange[]
+): DocumentSymbolDefinition[] {
+  return collectDocumentSymbolDefinitionsFromLineSource(source, lineRanges);
+}
+
+function collectDocumentSymbolDefinitionsFromLineSource(
+  source: LineTextSource,
+  lineRanges?: readonly ViewportLineRange[]
+): DocumentSymbolDefinition[] {
+  const ranges = normalizeLineRanges(source.lineCount, lineRanges);
   const definitions: DocumentSymbolDefinition[] = [];
   let braceDepth = 0;
-  let lineIndex = 0;
+  let lineIndex = ranges.length > 0 ? ranges[0].startLine : 0;
 
-  while (lineIndex < lines.length) {
+  while (lineIndex < source.lineCount) {
+    if (ranges.length > 0 && !isLineInRanges(lineIndex, ranges)) {
+      const nextLine = findNextRangeStart(lineIndex, ranges);
+      if (nextLine == null) {
+        break;
+      }
+
+      lineIndex = nextLine;
+      continue;
+    }
+
     const startLine = lineIndex;
-    let lineText = lines[lineIndex];
+    let lineText = source.lineAt(lineIndex).text;
+    let continuationLines = 0;
 
-    while (lineText.trimEnd().endsWith("\\") && lineIndex + 1 < lines.length) {
+    while (
+      lineText.trimEnd().endsWith("\\") &&
+      lineIndex + 1 < source.lineCount &&
+      continuationLines < MAX_LOGICAL_LINE_CONTINUATION_LINES
+    ) {
       lineIndex += 1;
-      lineText = `${lineText.trimEnd().slice(0, -1)} ${lines[lineIndex].trim()}`;
+      continuationLines += 1;
+      lineText = `${lineText.trimEnd().slice(0, -1)} ${source.lineAt(lineIndex).text.trim()}`;
     }
 
     const isDefineLine = DEFINE_DIRECTIVE_RX.test(lineText);
@@ -83,12 +161,14 @@ export function collectDocumentSymbolDefinitions(
     // Merge multi-line C statements (not #define) where semicolon is missing
     if (!isDefineLine && !lineText.trimStart().startsWith("#")) {
       while (
-        lineIndex + 1 < lines.length &&
+        lineIndex + 1 < source.lineCount &&
         isStatementIncomplete(lineText) &&
-        !lines[lineIndex + 1].trimStart().startsWith("#")
+        !source.lineAt(lineIndex + 1).text.trimStart().startsWith("#") &&
+        continuationLines < MAX_LOGICAL_LINE_CONTINUATION_LINES
       ) {
         lineIndex++;
-        lineText = `${lineText.trimEnd()} ${lines[lineIndex].trim()}`;
+        continuationLines += 1;
+        lineText = `${lineText.trimEnd()} ${source.lineAt(lineIndex).text.trim()}`;
       }
     }
 

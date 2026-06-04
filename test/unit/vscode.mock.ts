@@ -38,6 +38,7 @@ const DEFAULT_CALCDOCS_CONFIG: Record<string, unknown> = {
   resourceCpuThreshold: 70,
   "ui.invasiveness": "standard",
   "cpp.codeLens.enabled": true,
+  "cpp.codeLens.maxItemsPerViewport": 40,
   "cpp.codeLens.maxItemsPerFile": 40,
   "cpp.codeLens.showAmbiguity": true,
   "cpp.codeLens.showCastOverflow": true,
@@ -55,6 +56,7 @@ const DEFAULT_CALCDOCS_CONFIG: Record<string, unknown> = {
   "cpp.hover.showFormulaSection": true,
   "cpp.hover.showKnownValue": true,
   "inline.codeLens.enabled": true,
+  "inline.codeLens.maxItemsPerViewport": 30,
   "inline.codeLens.maxItemsPerFile": 30,
   "inline.hover.enabled": true,
   "inline.hover.showDimension": true,
@@ -132,6 +134,7 @@ export const window = {
   }),
   onDidChangeActiveTextEditor: (_handler: unknown) => ({ dispose: () => {} }),
   onDidChangeVisibleTextEditors: (_handler: unknown) => ({ dispose: () => {} }),
+  onDidChangeTextEditorVisibleRanges: (_handler: unknown) => ({ dispose: () => {} }),
   onDidChangeWindowState: (_handler: unknown) => ({ dispose: () => {} }),
 };
 

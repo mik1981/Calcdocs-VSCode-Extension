@@ -1,12 +1,9 @@
 # Changelog
 
-## [0.3.2] - 06/03/2026
+## [0.3.3] - 06/04/2026
 
-- Added tolerance propagation in the interactive formula viewer
-- Updated documentation to include new formula file fields for managing component and formula tolerances
-- Added support for table arrays in formula files
-- Removed line decorations in the CalcDocs Formulas Explorer to improve clarity; lines are still visible on hover
-- Fixed an error occurring when adding a unit to a raw value
+- Added `cppCodeLens.maxItemsPerViewport` and `inlineCodeLens.maxItemsPerViewport` settings (defaulting to 40 and 30 - respectively).
+- Fixed ghost value range limit, applying it only to the actual editor view.
 
 ### Upcoming Features:
 
@@ -14,6 +11,14 @@
 - Fixed-point Analyzer (Q15/Q31)
 - Tolerance model rss and gaussian
 - Table formula support
+
+## [0.3.2] - 06/03/2026
+
+- Added tolerance propagation in the interactive formula viewer
+- Updated documentation to include new formula file fields for managing component and formula tolerances
+- Added support for table arrays in formula files
+- Removed line decorations in the CalcDocs Formulas Explorer to improve clarity; lines are still visible on hover
+- Fixed an error occurring when adding a unit to a raw value
 
 ## [0.3.1] - 05/27/2026
 

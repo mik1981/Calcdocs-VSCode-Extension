@@ -1,5 +1,6 @@
 import { evaluateExpressionPreview, formatPreviewNumber } from "./preview";
 import type { CalcDocsState } from "./state";
+import type { LineTextSource, ViewportLineRange } from "./viewport";
 import {
   convertSiToUnit,
   convertUnitValueToSi,
@@ -910,13 +911,8 @@ function normalizeCommentLine(rawComment: string): string {
   return rawComment.replace(/^\s*\*+\s?/, "").trim();
 }
 
-function extractCommentLines(documentText: string, languageId?: string): { line: number; comment: string }[] {
-  const lines = documentText.split(/\r?\n/);
-  const comments: { line: number; comment: string }[] = [];
+function extractCommentFromLine(lineText: string, languageId?: string): string {
   const isYaml = languageId === "yaml";
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const lineText = lines[lineIndex];
     let cursor = 0;
     let commentBuffer = "";
     let inString: string | null = null;
@@ -980,8 +976,45 @@ function extractCommentLines(documentText: string, languageId?: string): { line:
       cursor += 1;
     }
 
-    const normalized = normalizeCommentLine(commentBuffer);
-    if (normalized) {
+  return normalizeCommentLine(commentBuffer);
+}
+
+function extractCommentLines(documentText: string, languageId?: string): { line: number; comment: string }[] {
+  const lines = documentText.split(/\r?\n/);
+  const comments: { line: number; comment: string }[] = [];
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const normalized = extractCommentFromLine(lines[lineIndex], languageId);
+    if (!normalized) {
+      continue;
+    }
+
+    comments.push({
+      line: lineIndex,
+      comment: normalized,
+    });
+  }
+
+  return comments;
+}
+
+function extractCommentLinesInLineRanges(
+  source: LineTextSource,
+  lineRanges: readonly ViewportLineRange[],
+  languageId?: string
+): { line: number; comment: string }[] {
+  const comments: { line: number; comment: string }[] = [];
+
+  for (const range of lineRanges) {
+    const startLine = Math.max(0, Math.min(source.lineCount - 1, range.startLine));
+    const endLine = Math.max(0, Math.min(source.lineCount - 1, range.endLine));
+
+    for (let lineIndex = startLine; lineIndex <= endLine; lineIndex += 1) {
+      const normalized = extractCommentFromLine(source.lineAt(lineIndex).text, languageId);
+      if (!normalized) {
+        continue;
+      }
+
       comments.push({
         line: lineIndex,
         comment: normalized,
@@ -992,9 +1025,10 @@ function extractCommentLines(documentText: string, languageId?: string): { line:
   return comments;
 }
 
-function parseInlineCommands(documentText: string, languageId?: string): InlineCommand[] {
+function parseInlineCommandsFromComments(
+  comments: readonly { line: number; comment: string }[]
+): InlineCommand[] {
   const commands: InlineCommand[] = [];
-  const comments = extractCommentLines(documentText, languageId);
 
   for (const entry of comments) {
     const lineIgnore = IGNORE_LINE_DIRECTIVE_RX.test(entry.comment);
@@ -1066,6 +1100,20 @@ function parseInlineCommands(documentText: string, languageId?: string): InlineC
   }
 
   return commands;
+}
+
+function parseInlineCommands(documentText: string, languageId?: string): InlineCommand[] {
+  return parseInlineCommandsFromComments(extractCommentLines(documentText, languageId));
+}
+
+function parseInlineCommandsInLineRanges(
+  source: LineTextSource,
+  lineRanges: readonly ViewportLineRange[],
+  languageId?: string
+): InlineCommand[] {
+  return parseInlineCommandsFromComments(
+    extractCommentLinesInLineRanges(source, lineRanges, languageId)
+  );
 }
 
 function hasQuantityLiteralSignal(expression: string): boolean {
@@ -1230,17 +1278,15 @@ function pickSeverity(error: string | undefined, warnings: string[]): InlineCalc
   return "info";
 }
 
-export function evaluateInlineCalcs(
-  documentText: string,
+function evaluateInlineCommands(
+  commands: readonly InlineCommand[],
   state: CalcDocsState,
-  options: InlineCalcEvaluationOptions = {},
-  languageId?: string
+  options: InlineCalcEvaluationOptions = {}
 ): InlineCalcResult[] {
   const includeSuppressed = options.includeSuppressed ?? false;
   const includeAssignments = options.includeAssignments ?? true;
   const variables = new Map<string, number>();
   const variableDimensions = buildVariableDimensions(state);
-  const commands = parseInlineCommands(documentText, languageId);
   const results: InlineCalcResult[] = [];
 
   for (const command of commands) {
@@ -1323,4 +1369,35 @@ export function evaluateInlineCalcs(
   }
 
   return results;
+}
+
+export function evaluateInlineCalcs(
+  documentText: string,
+  state: CalcDocsState,
+  options: InlineCalcEvaluationOptions = {},
+  languageId?: string
+): InlineCalcResult[] {
+  return evaluateInlineCommands(
+    parseInlineCommands(documentText, languageId),
+    state,
+    options
+  );
+}
+
+export function evaluateInlineCalcsInLineRanges(
+  source: LineTextSource,
+  state: CalcDocsState,
+  options: InlineCalcEvaluationOptions = {},
+  languageId: string | undefined,
+  lineRanges: readonly ViewportLineRange[]
+): InlineCalcResult[] {
+  if (lineRanges.length === 0) {
+    return [];
+  }
+
+  return evaluateInlineCommands(
+    parseInlineCommandsInLineRanges(source, lineRanges, languageId),
+    state,
+    options
+  );
 }

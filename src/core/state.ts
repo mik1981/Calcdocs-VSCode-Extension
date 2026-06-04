@@ -217,6 +217,7 @@ export function createCalcDocsState(
     uiInvasiveness: "standard",
     cppCodeLens: {
       enabled: true,
+      maxItemsPerViewport: 40,
       maxItemsPerFile: 40,
       showAmbiguity: true,
       showCastOverflow: true,
@@ -239,6 +240,7 @@ export function createCalcDocsState(
     },
     inlineCodeLens: {
       enabled: true,
+      maxItemsPerViewport: 30,
       maxItemsPerFile: 30,
     },
     inlineHover: {

@@ -1,0 +1,110 @@
+# Questo file serve a verificare (separatamente e in modo indipendente) i 3 modelli di propagazione:
+# - worst_case
+# - rss
+# - gaussian
+#
+# Nota: il motore applica la modalità indicata su ciascun simbolo "finale" (campo tol_mode/mode).
+# Per i simboli con tol percentuale dichiarata (X), la tolleranza viene poi propagata.
+
+# ------------------------------
+# INPUT CON TOLLERANZA
+# ------------------------------
+X_TOL:
+  # caso non-lineare: usa un valore nominale abbastanza semplice
+  type: const
+  value: 100
+  unit: count
+  # ±5% sul nominale
+  tol: 5
+  tol_mode: worst_case
+
+X_RSS:
+  # caso non-lineare: usa un valore nominale abbastanza semplice
+  type: const
+  value: 100
+  unit: count
+  tol: 5
+  tol_mode: rss
+  sigma: 2
+
+X_GAUSS:
+  # caso non-lineare: usa un valore nominale abbastanza semplice
+  type: const
+  value: 100
+  unit: count
+  tol: 5
+  tol_mode: gaussian
+  sigma: 2
+
+# ------------------------------
+# CASO LINEARE: Y = X
+# ------------------------------
+Y_linear:
+  type: expr
+  formula: X_TOL
+  unit: count
+  # expected range con propagazione a partire da X=100 ±5% → [95, 105]
+  expected:
+    value: 100
+    min: 95
+    max: 105
+
+Y_linear_rss:
+  type: expr
+  formula: X_RSS
+  unit: count
+  # per formula lineare singola sorgente, RSS coincide con worst_case
+  expected:
+    value: 100
+    min: 95
+    max: 105
+
+Y_linear_gaussian:
+  type: expr
+  formula: X_GAUSS
+  unit: count
+  # con 1 sorgente: sigmaOut = halfSpan = 5, gaussian usa nsigma = sigma
+  # nsigma* sigmaOut = 2*5 = 10 → [90, 110]
+  expected:
+    value: 100
+    min: 90
+    max: 110
+
+# ------------------------------
+# CASO NON-LINEARE: Y = X^2
+# ------------------------------
+# X range: [95, 105]
+# Y = X^2 → min = 95^2 = 9025, max = 105^2 = 11025, nominal=100^2=10000
+
+Y_nonlinear:
+  type: expr
+  formula: X_TOL * X_TOL
+  unit: count
+  expected:
+    value: 10000
+    min: 9025
+    max: 11025
+
+Y_nonlinear_rss:
+  type: expr
+  formula: X_RSS * X_RSS
+  unit: count
+  # con 1 sorgente: RSS porta a min/max = nominal ± (fPlus-fMinus)/2
+  # fPlus = 105^2 = 11025, fMinus = 95^2 = 9025
+  # halfSpanOut = (11025-9025)/2 = 1000 → [9000, 11000]
+  expected:
+    value: 10000
+    min: 9000
+    max: 11000
+
+Y_nonlinear_gaussian:
+  type: expr
+  formula: X_GAUSS * X_GAUSS
+  unit: count
+  # gaussian usa nsigma = sigma: 2 * sigmaOut dove sigmaOut = sqrt(sumSq) = 1000
+  # → ±2000 → [8000, 12000]
+  expected:
+    value: 10000
+    min: 8000
+    max: 12000
+

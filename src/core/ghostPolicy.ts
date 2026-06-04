@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { collectCppCodeLensItems, type CppCodeLensItem } from "./cppCodeLensItems";
 import { extractPureGhostValue } from "./ghostValues";
 import { CalcDocsState } from "./state";
+import { getMaxItemsPerViewport } from "./viewport";
 
 // Extended to include "cpp" so that .h files (which VSCode may identify as
 // either "c" or "cpp" depending on workspace / extension config) also receive
@@ -47,8 +48,10 @@ export function getPotentialGhostItems(
   line: number,
   state: CalcDocsState
 ): CppCodeLensItem[] {
-  const maxItems = Math.max(1, state.cppCodeLens.maxItemsPerFile || 40);
-  const allItems = collectCppCodeLensItems(document, state, maxItems);
+  const maxItems = getMaxItemsPerViewport(state.cppCodeLens, 40);
+  const allItems = collectCppCodeLensItems(document, state, maxItems, {
+    lineRanges: [{ startLine: line, endLine: line }],
+  });
   return allItems.filter(
     (item) => item.line === line && isGhostReplaceableItem(item)
   );

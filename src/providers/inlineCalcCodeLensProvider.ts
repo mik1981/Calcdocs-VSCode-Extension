@@ -1,7 +1,18 @@
 import * as vscode from "vscode";
 
-import { evaluateInlineCalcs, type InlineCalcResult } from "../core/inlineCalc";
+import { evaluateInlineCalcsInLineRanges, type InlineCalcResult } from "../core/inlineCalc";
 import { CalcDocsState } from "../core/state";
+import {
+  CODELENS_DENSE_LINE_ITEM_LIMIT,
+  countItemsByLine,
+  debugViewportLog,
+  filterItemsToViewport,
+  getMaxItemsPerViewport,
+  getVisibleRangesForDocument,
+  toViewportLineRanges,
+  viewportRangesKey,
+  VIEWPORT_REFRESH_DEBOUNCE_MS,
+} from "../core/viewport";
 
 const CODELENS_MAX_TITLE_LEN = 160;
 const CODELENS_SOURCE_PREVIEW_LEN = 80;
@@ -60,13 +71,50 @@ function buildCodeLensTitle(result: InlineCalcResult, state: CalcDocsState): str
  */
 export class InlineCalcCodeLensProvider implements vscode.CodeLensProvider {
   private readonly emitter = new vscode.EventEmitter<void>();
+  private readonly disposables: vscode.Disposable[] = [];
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   readonly onDidChangeCodeLenses = this.emitter.event;
 
-  constructor(private readonly state: CalcDocsState) {}
+  constructor(private readonly state: CalcDocsState) {
+    this.disposables.push(
+      vscode.window.onDidChangeTextEditorVisibleRanges(() => {
+        this.scheduleRefresh();
+      })
+    );
+  }
 
   refresh(): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+
     this.emitter.fire();
+  }
+
+  scheduleRefresh(delayMs = VIEWPORT_REFRESH_DEBOUNCE_MS): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+    }
+
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      this.emitter.fire();
+    }, delayMs);
+  }
+
+  dispose(): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+
+    for (const disposable of this.disposables) {
+      disposable.dispose();
+    }
+
+    this.emitter.dispose();
   }
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
@@ -74,19 +122,41 @@ export class InlineCalcCodeLensProvider implements vscode.CodeLensProvider {
       return [];
     }
 
-    const maxItemsPerFile = Math.max(1, this.state.inlineCodeLens.maxItemsPerFile);
-    const results = evaluateInlineCalcs(document.getText(), this.state, {
-      includeAssignments: true,
-    }, document.languageId);
-    const lenses: vscode.CodeLens[] = [];
+    const visibleRanges = getVisibleRangesForDocument(document);
+    const lineRanges = toViewportLineRanges(document, visibleRanges);
+    if (lineRanges.length === 0) {
+      debugViewportLog(this.state, "codelens.inline", {
+        uri: document.uri.toString(),
+        totalItems: 0,
+        itemsFilteredByViewport: 0,
+        itemsRendered: 0,
+        ranges: "",
+      });
+      return [];
+    }
 
-    for (const result of results) {
-      if (lenses.length >= maxItemsPerFile) {
+    const maxItemsPerViewport = getMaxItemsPerViewport(this.state.inlineCodeLens, 30);
+    const results = evaluateInlineCalcsInLineRanges(
+      document,
+      this.state,
+      { includeAssignments: true },
+      document.languageId,
+      lineRanges
+    );
+    const viewportResults = filterItemsToViewport(results, lineRanges);
+    const lineResultCounts = countItemsByLine(viewportResults);
+    const lenses: vscode.CodeLens[] = [];
+    const ghostCanRender = this.state.inlineGhostEnabled && INLINE_CALC_GHOST_LANGUAGES.has(document.languageId);
+
+    for (const result of viewportResults) {
+      if (lenses.length >= maxItemsPerViewport) {
         break;
       }
 
-      // Skip if ghost takes priority on this line
-      if (this.state.inlineGhostEnabled && INLINE_CALC_GHOST_LANGUAGES.has(document.languageId)) {
+      if (
+        ghostCanRender &&
+        (lineResultCounts.get(result.line) ?? 0) > CODELENS_DENSE_LINE_ITEM_LIMIT
+      ) {
         continue;
       }
 
@@ -98,6 +168,15 @@ export class InlineCalcCodeLensProvider implements vscode.CodeLensProvider {
       );
     }
 
+    debugViewportLog(this.state, "codelens.inline", {
+      uri: document.uri.toString(),
+      totalItems: results.length,
+      itemsFilteredByViewport: results.length - viewportResults.length,
+      itemsRendered: lenses.length,
+      ranges: viewportRangesKey(lineRanges),
+      denseLines: Array.from(lineResultCounts.values()).filter((count) => count > CODELENS_DENSE_LINE_ITEM_LIMIT).length,
+    });
+
     return lenses;
   }
 }
@@ -106,6 +185,7 @@ export function registerInlineCalcCodeLensProvider(
   context: vscode.ExtensionContext,
   provider: InlineCalcCodeLensProvider
 ): void {
+  context.subscriptions.push(provider);
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       [

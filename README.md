@@ -1,4 +1,4 @@
-# 🧮 CalcDocs — Instantly See What Your Firmware REALLY Computes [0.3.2-*prerelease*]
+# 🧮 CalcDocs — Instantly See What Your Firmware REALLY Computes [0.3.3-*prerelease*]
 
 <p align="center">
   <b>Reveal hidden firmware values directly inside VS Code.</b><br>

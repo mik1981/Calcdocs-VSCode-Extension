@@ -41,6 +41,7 @@ import {
   UNIT_SPECS,
 } from "./units";
 import type { TolMode } from "../types/FormulaEntry";
+import { runMonteCarlo, distributionFromTolerance, type McInput } from "./monteCarlo";
 
 export type YamlSymbolType = "const" | "expr" | "lookup";
 
@@ -1272,136 +1273,224 @@ export function evaluateYamlDocument(
 
       if (totalInputs > 0 && totalInputs <= 12) {
 
-        // Funzione che valuta l'espressione dati i valori numerici degli input.
-        // overrideValues[i] = valore display numerico per scalarEntries[i]
-        // arrayFactors[i]   = moltiplicatore per arrayEntries[i] (1 ± tol)
-        const evalAtPoint = (
-          overrideValues: number[],
-          arrayFactors: number[]
-        ): number | undefined => {
-          const overrideMap    = new Map<string, Quantity>();
-          const arrayOverrideMap = new Map<string, Quantity[]>();
+        // ── Monte Carlo path (new) ──────────────────────────────────────────
+        const useMonteCarlo = tolMode === "rss" || tolMode === "gaussian";
 
-          scalarEntries.forEach(([name, range], i) => {
-            const v    = overrideValues[i];
-            const unit = range.min.displayUnit ?? range.min.preferredUnit;
-            const q    = unit ? createQuantityFromData(v, unit) : createQuantity(v);
-            if (q.ok) overrideMap.set(name, q.value);
-            else {
-              const qs = createQuantity(v);
-              if (qs.ok) overrideMap.set(name, qs.value);
+        if (useMonteCarlo) {
+          const mcInputs: McInput[] = [];
+
+          for (const [depName, range] of scalarEntries) {
+            const depEntry = symbols.get(depName);
+            const depTol = depEntry?.tolerance;
+            mcInputs.push({
+              name: depName,
+              distribution: distributionFromTolerance(
+                depTol?.mode ?? tolMode,
+                toDisplayValue(range.min),
+                toDisplayValue(range.max),
+                (toDisplayValue(range.min) + toDisplayValue(range.max)) / 2,
+                depTol?.sigma ?? tolSigma
+              ),
+            });
+          }
+
+          for (const [depName, { tol, baseQuantities }] of arrayEntries) {
+            // For array inputs, use the tol% as a rectangular ±tol bound around 1.0
+            // (the scaling factor applied to all elements)
+            mcInputs.push({
+              name: `__array_scale_${depName}`,
+              distribution: { kind: "rectangular", min: 1 - tol, max: 1 + tol },
+            });
+          }
+
+          const evalFn = (sampleValues: Record<string, number>): number => {
+            const arrayOverrideMap = new Map<string, Quantity[]>();
+            for (const [depName, { baseQuantities }] of arrayEntries) {
+              const factor = sampleValues[`__array_scale_${depName}`] ?? 1;
+              arrayOverrideMap.set(depName, baseQuantities.map(q => ({
+                ...q, valueSi: q.valueSi * factor,
+              })));
             }
-          });
 
-          arrayEntries.forEach(([name, { baseQuantities }], i) => {
-            const factor = arrayFactors[i];
-            arrayOverrideMap.set(
-              name,
-              baseQuantities.map(q => ({ ...q, valueSi: q.valueSi * factor }))
-            );
-          });
+            const mcContext: EvaluationContext = {
+              ...context,
+              resolveIdentifier: (id) => {
+                if (id in sampleValues) {
+                  const v = sampleValues[id];
+                  // Recupera l'unità dalla range map invece della variabile loop
+                  const inputRange = rangeInputs.get(id);
+                  const unit = inputRange?.min.displayUnit 
+                            ?? inputRange?.min.preferredUnit
+                            ?? context.resolveIdentifier(id)?.displayUnit;
+                  if (unit) {
+                    const q = createYamlDataQuantity(v, unit);
+                    if (q.ok) return q.value;
+                  }
+                  return createDimensionlessQuantity(v);
+                }
+                return context.resolveIdentifier(id);
+              },
+              resolveArrayIdentifier: arrayOverrideMap.size > 0
+                ? (n) => arrayOverrideMap.get(n) ?? context.resolveArrayIdentifier?.(n)
+                : context.resolveArrayIdentifier,
+            };
 
-          const rangeContext: EvaluationContext = {
-            ...context,
-            resolveIdentifier: (id) =>
-              overrideMap.get(id) ?? context.resolveIdentifier(id),
-            resolveArrayIdentifier: arrayOverrideMap.size > 0
-              ? (name) => arrayOverrideMap.get(name) ?? context.resolveArrayIdentifier?.(name)
-              : context.resolveArrayIdentifier,
+            const ev = evaluateExpressionAst(symbol.ast!, mcContext);
+            if (!ev.ok) return NaN;
+
+            let q = ev.quantity;
+            if (symbol.effectiveUnit) {
+              const out = applyOutputUnit(q, symbol.effectiveUnit);
+              if (out.ok) return out.value.displayValue;
+            }
+            return toDisplayValue(q);
           };
 
-          const ev = evaluateExpressionAst(symbol.ast!, rangeContext);
-          if (!ev.ok) return undefined;
+          const mcResult = runMonteCarlo(mcInputs, evalFn, { nSamples: 10_000 });
 
-          let q = ev.quantity;
-          if (symbol.effectiveUnit) {
-            const out = applyOutputUnit(q, symbol.effectiveUnit);
-            if (out.ok) return out.value.displayValue;
-          }
-          return toDisplayValue(q);
-        };
-
-        // Valori nominali degli scalari (centro del range)
-        const nominalScalars = scalarEntries.map(([, range]) =>
-          (toDisplayValue(range.min) + toDisplayValue(range.max)) / 2
-        );
-        const nominalArrayFactors = arrayEntries.map(() => 1.0);
-
-        if (tolMode === "worst_case") {
-          const values: number[] = [];
-          const combinations = 1 << totalInputs;
-          for (let mask = 0; mask < combinations; mask++) {
-            const sv = scalarEntries.map(([, range], i) =>
-              (mask & (1 << i)) === 0
-                ? toDisplayValue(range.min)
-                : toDisplayValue(range.max)
-            );
-            const af = arrayEntries.map(([, { tol }], i) =>
-              (mask & (1 << (i + scalarEntries.length))) === 0
-                ? (1 - tol)
-                : (1 + tol)
-            );
-            const v = evalAtPoint(sv, af);
-            if (v !== undefined && Number.isFinite(v)) values.push(v);
-          }
-          if (values.length > 0) {
+          if (Number.isFinite(mcResult.mean)) {
             result.range = {
-              min: Math.min(...values),
-              max: Math.max(...values),
+              min: mcResult.p025,
+              max: mcResult.p975,
               source: "propagated",
-              nominalValue: result.value,
+              nominalValue: mcResult.mean,
               mode: tolMode,
               sigma: tolSigma,
             };
           }
 
         } else {
-          // RSS e gaussian: differenze finite centrate
-          let sumSq = 0;
-          const nominal = result.value ?? evalAtPoint(nominalScalars, nominalArrayFactors) ?? 0;
+          // Funzione che valuta l'espressione dati i valori numerici degli input.
+          // overrideValues[i] = valore display numerico per scalarEntries[i]
+          // arrayFactors[i]   = moltiplicatore per arrayEntries[i] (1 ± tol)
+          const evalAtPoint = (
+            overrideValues: number[],
+            arrayFactors: number[]
+          ): number | undefined => {
+            const overrideMap    = new Map<string, Quantity>();
+            const arrayOverrideMap = new Map<string, Quantity[]>();
 
-          // Sensibilità scalari
-          for (let i = 0; i < scalarEntries.length; i++) {
-            const [, range] = scalarEntries[i];
-            const halfSpan = (toDisplayValue(range.max) - toDisplayValue(range.min)) / 2;
-            if (halfSpan <= 0) continue;
+            scalarEntries.forEach(([name, range], i) => {
+              const v    = overrideValues[i];
+              const unit = range.min.displayUnit ?? range.min.preferredUnit;
+              const q    = unit ? createQuantityFromData(v, unit) : createQuantity(v);
+              if (q.ok) overrideMap.set(name, q.value);
+              else {
+                const qs = createQuantity(v);
+                if (qs.ok) overrideMap.set(name, qs.value);
+              }
+            });
 
-            const svPlus  = [...nominalScalars]; svPlus[i]  = nominalScalars[i] + halfSpan;
-            const svMinus = [...nominalScalars]; svMinus[i] = nominalScalars[i] - halfSpan;
+            arrayEntries.forEach(([name, { baseQuantities }], i) => {
+              const factor = arrayFactors[i];
+              arrayOverrideMap.set(
+                name,
+                baseQuantities.map(q => ({ ...q, valueSi: q.valueSi * factor }))
+              );
+            });
 
-            const fPlus  = evalAtPoint(svPlus,  nominalArrayFactors);
-            const fMinus = evalAtPoint(svMinus, nominalArrayFactors);
-            if (fPlus === undefined || fMinus === undefined) continue;
-
-            const sensitivity = (fPlus - fMinus) / 2;
-            sumSq += sensitivity * sensitivity;
-          }
-
-          // Sensibilità array
-          for (let i = 0; i < arrayEntries.length; i++) {
-            const [, { tol }] = arrayEntries[i];
-            const afPlus  = [...nominalArrayFactors]; afPlus[i]  = 1 + tol;
-            const afMinus = [...nominalArrayFactors]; afMinus[i] = 1 - tol;
-
-            const fPlus  = evalAtPoint(nominalScalars, afPlus);
-            const fMinus = evalAtPoint(nominalScalars, afMinus);
-            if (fPlus === undefined || fMinus === undefined) continue;
-
-            const sensitivity = (fPlus - fMinus) / 2;
-            sumSq += sensitivity * sensitivity;
-          }
-
-          if (sumSq > 0) {
-            const sigmaOut = Math.sqrt(sumSq);
-            const nsigma   = tolMode === "gaussian" ? tolSigma : 1;
-            result.range = {
-              min: nominal - nsigma * sigmaOut,
-              max: nominal + nsigma * sigmaOut,
-              source: "propagated",
-              nominalValue: nominal,
-              mode: tolMode,
-              sigma: tolSigma,
+            const rangeContext: EvaluationContext = {
+              ...context,
+              resolveIdentifier: (id) =>
+                overrideMap.get(id) ?? context.resolveIdentifier(id),
+              resolveArrayIdentifier: arrayOverrideMap.size > 0
+                ? (name) => arrayOverrideMap.get(name) ?? context.resolveArrayIdentifier?.(name)
+                : context.resolveArrayIdentifier,
             };
+
+            const ev = evaluateExpressionAst(symbol.ast!, rangeContext);
+            if (!ev.ok) return undefined;
+
+            let q = ev.quantity;
+            if (symbol.effectiveUnit) {
+              const out = applyOutputUnit(q, symbol.effectiveUnit);
+              if (out.ok) return out.value.displayValue;
+            }
+            return toDisplayValue(q);
+          };
+
+          // Valori nominali degli scalari (centro del range)
+          const nominalScalars = scalarEntries.map(([, range]) =>
+            (toDisplayValue(range.min) + toDisplayValue(range.max)) / 2
+          );
+          const nominalArrayFactors = arrayEntries.map(() => 1.0);
+
+          if (tolMode === "worst_case") {
+            const values: number[] = [];
+            const combinations = 1 << totalInputs;
+            for (let mask = 0; mask < combinations; mask++) {
+              const sv = scalarEntries.map(([, range], i) =>
+                (mask & (1 << i)) === 0
+                  ? toDisplayValue(range.min)
+                  : toDisplayValue(range.max)
+              );
+              const af = arrayEntries.map(([, { tol }], i) =>
+                (mask & (1 << (i + scalarEntries.length))) === 0
+                  ? (1 - tol)
+                  : (1 + tol)
+              );
+              const v = evalAtPoint(sv, af);
+              if (v !== undefined && Number.isFinite(v)) values.push(v);
+            }
+            if (values.length > 0) {
+              result.range = {
+                min: Math.min(...values),
+                max: Math.max(...values),
+                source: "propagated",
+                nominalValue: result.value,
+                mode: tolMode,
+                sigma: tolSigma,
+              };
+            }
+
+          } else {
+            // RSS e gaussian: differenze finite centrate
+            let sumSq = 0;
+            const nominal = result.value ?? evalAtPoint(nominalScalars, nominalArrayFactors) ?? 0;
+
+            // Sensibilità scalari
+            for (let i = 0; i < scalarEntries.length; i++) {
+              const [, range] = scalarEntries[i];
+              const halfSpan = (toDisplayValue(range.max) - toDisplayValue(range.min)) / 2;
+              if (halfSpan <= 0) continue;
+
+              const svPlus  = [...nominalScalars]; svPlus[i]  = nominalScalars[i] + halfSpan;
+              const svMinus = [...nominalScalars]; svMinus[i] = nominalScalars[i] - halfSpan;
+
+              const fPlus  = evalAtPoint(svPlus,  nominalArrayFactors);
+              const fMinus = evalAtPoint(svMinus, nominalArrayFactors);
+              if (fPlus === undefined || fMinus === undefined) continue;
+
+              const sensitivity = (fPlus - fMinus) / 2;
+              sumSq += sensitivity * sensitivity;
+            }
+
+            // Sensibilità array
+            for (let i = 0; i < arrayEntries.length; i++) {
+              const [, { tol }] = arrayEntries[i];
+              const afPlus  = [...nominalArrayFactors]; afPlus[i]  = 1 + tol;
+              const afMinus = [...nominalArrayFactors]; afMinus[i] = 1 - tol;
+
+              const fPlus  = evalAtPoint(nominalScalars, afPlus);
+              const fMinus = evalAtPoint(nominalScalars, afMinus);
+              if (fPlus === undefined || fMinus === undefined) continue;
+
+              const sensitivity = (fPlus - fMinus) / 2;
+              sumSq += sensitivity * sensitivity;
+            }
+
+            if (sumSq > 0) {
+              const sigmaOut = Math.sqrt(sumSq);
+              const nsigma   = tolMode === "gaussian" ? tolSigma : 1;
+              result.range = {
+                min: nominal - nsigma * sigmaOut,
+                max: nominal + nsigma * sigmaOut,
+                source: "propagated",
+                nominalValue: nominal,
+                mode: tolMode,
+                sigma: tolSigma,
+              };
+            }
           }
         }
       }

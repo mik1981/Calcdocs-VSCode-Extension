@@ -3,6 +3,16 @@ import * as vscode from "vscode";
 import { collectCppCodeLensItems, type CppCodeLensItem } from "../core/cppCodeLensItems";
 import { shouldRenderGhostInsteadOfCodeLens } from "../core/ghostPolicy";
 import { CalcDocsState } from "../core/state";
+import {
+  countItemsByLine,
+  debugViewportLog,
+  filterItemsToViewport,
+  getMaxItemsPerViewport,
+  getVisibleRangesForDocument,
+  toViewportLineRanges,
+  viewportRangesKey,
+  VIEWPORT_REFRESH_DEBOUNCE_MS,
+} from "../core/viewport";
 
 function toCodeLens(item: CppCodeLensItem): vscode.CodeLens {
   return new vscode.CodeLens(new vscode.Range(item.line, 0, item.line, 0), {
@@ -17,13 +27,50 @@ function toCodeLens(item: CppCodeLensItem): vscode.CodeLens {
  */
 export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
   private readonly emitter = new vscode.EventEmitter<void>();
+  private readonly disposables: vscode.Disposable[] = [];
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   readonly onDidChangeCodeLenses = this.emitter.event;
 
-  constructor(private readonly state: CalcDocsState) {}
+  constructor(private readonly state: CalcDocsState) {
+    this.disposables.push(
+      vscode.window.onDidChangeTextEditorVisibleRanges(() => {
+        this.scheduleRefresh();
+      })
+    );
+  }
 
   refresh(): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+
     this.emitter.fire();
+  }
+
+  scheduleRefresh(delayMs = VIEWPORT_REFRESH_DEBOUNCE_MS): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+    }
+
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      this.emitter.fire();
+    }, delayMs);
+  }
+
+  dispose(): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+
+    for (const disposable of this.disposables) {
+      disposable.dispose();
+    }
+
+    this.emitter.dispose();
   }
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
@@ -31,11 +78,35 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
       return [];
     }
 
-    const maxItemsPerFile = Math.max(1, this.state.cppCodeLens.maxItemsPerFile);
-    const items = collectCppCodeLensItems(document, this.state, maxItemsPerFile);
+    const visibleRanges = getVisibleRangesForDocument(document);
+    const lineRanges = toViewportLineRanges(document, visibleRanges);
+    if (lineRanges.length === 0) {
+      debugViewportLog(this.state, "codelens.cpp", {
+        uri: document.uri.toString(),
+        totalItems: 0,
+        itemsFilteredByViewport: 0,
+        itemsRendered: 0,
+        ranges: "",
+      });
+      return [];
+    }
+
+    const maxItemsPerViewport = getMaxItemsPerViewport(this.state.cppCodeLens, 40);
+    const items = collectCppCodeLensItems(
+      document,
+      this.state,
+      maxItemsPerViewport * 4,
+      { lineRanges }
+    );
+    const viewportItems = filterItemsToViewport(items, lineRanges);
+    const lineItemCounts = countItemsByLine(viewportItems);
     const lenses: vscode.CodeLens[] = [];
 
-    for (const item of items) {
+    for (const item of viewportItems) {
+      if (lenses.length >= maxItemsPerViewport) {
+        break;
+      }
+
       if (item.kind === "functionCall") {
         continue; // function-call items: ghost/hover only, never code lens
       }
@@ -46,6 +117,15 @@ export class CppValueCodeLensProvider implements vscode.CodeLensProvider {
 
       lenses.push(toCodeLens(item));
     }
+
+    debugViewportLog(this.state, "codelens.cpp", {
+      uri: document.uri.toString(),
+      totalItems: items.length,
+      itemsFilteredByViewport: items.length - viewportItems.length,
+      itemsRendered: lenses.length,
+      ranges: viewportRangesKey(lineRanges),
+      denseLines: Array.from(lineItemCounts.values()).filter((count) => count > 1).length,
+    });
 
     return lenses;
   }
@@ -58,6 +138,7 @@ export function registerCppCodeLensProvider(
   context: vscode.ExtensionContext,
   provider: CppValueCodeLensProvider
 ): void {
+  context.subscriptions.push(provider);
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       [

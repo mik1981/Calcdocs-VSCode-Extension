@@ -98,8 +98,8 @@ export class GhostValueProvider {
 
     // ── C/C++ code-lens ghost values (existing logic, C only) ──────────────
     if (hasCppSymbolGhost) {
-      const maxItemsPerFile = Math.max(1, this.state.cppCodeLens.maxItemsPerFile);
-      const items = collectCppCodeLensItems(document, this.state, maxItemsPerFile * 4);
+      const maxItemsPerViewport = Math.max(1, this.state.cppCodeLens.maxItemsPerViewport);
+      const items = collectCppCodeLensItems(document, this.state, maxItemsPerViewport * 4);
 
       for (const item of items) {
         if (!shouldRenderGhostInsteadOfCodeLens(document, item, this.state)) {

@@ -40,7 +40,9 @@ export type ThousandsSeparator = "none" | "space" | "dot" | "comma" | "apostroph
 
 export type CppCodeLensConfig = {
   enabled: boolean;
-  maxItemsPerFile: number;
+  maxItemsPerViewport: number;
+  /** @deprecated Use maxItemsPerViewport. Kept for existing state/test objects. */
+  maxItemsPerFile?: number;
   showAmbiguity: boolean;
   showCastOverflow: boolean;
   showMismatch: boolean;
@@ -64,7 +66,9 @@ export type CppHoverConfig = {
 
 export type InlineCodeLensConfig = {
   enabled: boolean;
-  maxItemsPerFile: number;
+  maxItemsPerViewport: number;
+  /** @deprecated Use maxItemsPerViewport. Kept for existing state/test objects. */
+  maxItemsPerFile?: number;
 };
 
 export type InlineHoverConfig = {
@@ -142,7 +146,7 @@ const DEFAULT_UI_PROFILE: UiInvasivenessLevel = "standard";
 const UI_PROFILE_DEFAULTS: Record<UiInvasivenessLevel, UiProfileDefaults> = {
   minimal: {
     cppCodeLens: {
-      maxItemsPerFile: 12,
+      maxItemsPerViewport: 12,
       showAmbiguity: true,
       showCastOverflow: true,
       showMismatch: true,
@@ -162,7 +166,7 @@ const UI_PROFILE_DEFAULTS: Record<UiInvasivenessLevel, UiProfileDefaults> = {
       showLiveRegisterDecoder: true,
     },
     inlineCodeLens: {
-      maxItemsPerFile: 8,
+      maxItemsPerViewport: 8,
     },
     inlineHover: {
       showDimension: false,
@@ -172,7 +176,7 @@ const UI_PROFILE_DEFAULTS: Record<UiInvasivenessLevel, UiProfileDefaults> = {
   },
   standard: {
     cppCodeLens: {
-      maxItemsPerFile: 40,
+      maxItemsPerViewport: 40,
       showAmbiguity: true,
       showCastOverflow: true,
       showMismatch: true,
@@ -192,7 +196,7 @@ const UI_PROFILE_DEFAULTS: Record<UiInvasivenessLevel, UiProfileDefaults> = {
       showLiveRegisterDecoder: true,
     },
     inlineCodeLens: {
-      maxItemsPerFile: 30,
+      maxItemsPerViewport: 30,
     },
     inlineHover: {
       showDimension: true,
@@ -202,7 +206,7 @@ const UI_PROFILE_DEFAULTS: Record<UiInvasivenessLevel, UiProfileDefaults> = {
   },
   verbose: {
     cppCodeLens: {
-      maxItemsPerFile: 150,
+      maxItemsPerViewport: 150,
       showAmbiguity: true,
       showCastOverflow: true,
       showMismatch: true,
@@ -222,7 +226,7 @@ const UI_PROFILE_DEFAULTS: Record<UiInvasivenessLevel, UiProfileDefaults> = {
       showLiveRegisterDecoder: true,
     },
     inlineCodeLens: {
-      maxItemsPerFile: 100,
+      maxItemsPerViewport: 100,
     },
     inlineHover: {
       showDimension: true,
@@ -309,12 +313,22 @@ export function getConfig(): CalcDocsConfig {
   };
 
   const cppCodeLensEnabled = cfg.get<boolean>("cpp.codeLens.enabled", true);
+  const cppCodeLensMaxItemsPerViewport = normalizePositiveInt(
+    Number(
+      cfg.get<number>(
+        "cpp.codeLens.maxItemsPerViewport",
+        cfg.get<number>(
+          "cpp.codeLens.maxItemsPerFile",
+          uiDefaults.cppCodeLens.maxItemsPerViewport
+        )
+      )
+    ),
+    uiDefaults.cppCodeLens.maxItemsPerViewport
+  );
   const cppCodeLens: CppCodeLensConfig = {
     enabled: cppCodeLensEnabled,
-    maxItemsPerFile: normalizePositiveInt(
-      Number(cfg.get<number>("cpp.codeLens.maxItemsPerFile", uiDefaults.cppCodeLens.maxItemsPerFile)),
-      uiDefaults.cppCodeLens.maxItemsPerFile
-    ),
+    maxItemsPerViewport: cppCodeLensMaxItemsPerViewport,
+    maxItemsPerFile: cppCodeLensMaxItemsPerViewport,
     showAmbiguity: cfg.get<boolean>(
       "cpp.codeLens.showAmbiguity",
       uiDefaults.cppCodeLens.showAmbiguity
@@ -396,17 +410,22 @@ export function getConfig(): CalcDocsConfig {
     "inline.codeLens.enabled",
     cfg.get<boolean>("inlineCalc.enableCodeLens", true)
   );
-  const inlineCodeLens: InlineCodeLensConfig = {
-    enabled: inlineCodeLensEnabled,
-    maxItemsPerFile: normalizePositiveInt(
+  const inlineCodeLensMaxItemsPerViewport = normalizePositiveInt(
       Number(
+      cfg.get<number>(
+        "inline.codeLens.maxItemsPerViewport",
         cfg.get<number>(
           "inline.codeLens.maxItemsPerFile",
-          uiDefaults.inlineCodeLens.maxItemsPerFile
+          uiDefaults.inlineCodeLens.maxItemsPerViewport
+        )
         )
       ),
-      uiDefaults.inlineCodeLens.maxItemsPerFile
-    ),
+    uiDefaults.inlineCodeLens.maxItemsPerViewport
+  );
+  const inlineCodeLens: InlineCodeLensConfig = {
+    enabled: inlineCodeLensEnabled,
+    maxItemsPerViewport: inlineCodeLensMaxItemsPerViewport,
+    maxItemsPerFile: inlineCodeLensMaxItemsPerViewport,
   };
 
   const inlineHoverEnabled = cfg.get<boolean>(
