@@ -1,0 +1,134 @@
+export class Position {
+  constructor(
+    public readonly line: number,
+    public readonly character: number
+  ) {}
+}
+
+export class Range {
+  constructor(
+    public readonly start: Position | number,
+    public readonly startCharacter?: number,
+    public readonly endLine?: number,
+    public readonly endCharacter?: number
+  ) {}
+}
+
+export class EventEmitter<T> {
+  private listeners: Array<(value: T) => void> = [];
+  readonly event = (listener: (value: T) => void) => {
+    this.listeners.push(listener);
+    return { dispose: () => undefined };
+  };
+  fire(value: T): void {
+    for (const listener of this.listeners) {
+      listener(value);
+    }
+  }
+  dispose(): void {
+    this.listeners = [];
+  }
+}
+
+export class Diagnostic {
+  code: string | number | undefined;
+  source: string | undefined;
+  constructor(
+    public readonly range: Range,
+    public readonly message: string,
+    public readonly severity: DiagnosticSeverity
+  ) {}
+}
+
+export enum DiagnosticSeverity {
+  Error = 0,
+  Warning = 1,
+  Information = 2,
+}
+
+export class MarkdownString {
+  value = "";
+  appendMarkdown(text: string): void {
+    this.value += text;
+  }
+  appendCodeblock(code: string): void {
+    this.value += code;
+  }
+}
+
+export class Hover {
+  constructor(public readonly contents: MarkdownString) {}
+}
+
+export class CodeLens {
+  constructor(
+    public readonly range: Range,
+    public readonly command?: unknown
+  ) {}
+}
+
+export class TreeItem {
+  description: string | undefined;
+  tooltip: string | undefined;
+  command: unknown;
+  constructor(
+    public readonly label: string,
+    public readonly collapsibleState?: TreeItemCollapsibleState
+  ) {}
+}
+
+export enum TreeItemCollapsibleState {
+  None = 0,
+}
+
+export enum DecorationRangeBehavior {
+  ClosedClosed = 0,
+}
+
+export class ThemeColor {
+  constructor(public readonly id: string) {}
+}
+
+export class Uri {
+  constructor(public readonly fsPath: string, public readonly scheme = "file") {}
+  static file(filePath: string): Uri {
+    return new Uri(filePath);
+  }
+  toString(): string {
+    return this.fsPath;
+  }
+}
+
+export const languages = {
+  createDiagnosticCollection: () => ({
+    set: () => undefined,
+    clear: () => undefined,
+    dispose: () => undefined,
+  }),
+  registerCodeLensProvider: () => ({ dispose: () => undefined }),
+  registerHoverProvider: () => ({ dispose: () => undefined }),
+};
+
+export const window = {
+  activeTextEditor: undefined,
+  createTextEditorDecorationType: () => ({ dispose: () => undefined }),
+  createTreeView: () => ({ dispose: () => undefined }),
+  onDidChangeActiveTextEditor: () => ({ dispose: () => undefined }),
+  onDidChangeTextEditorVisibleRanges: () => ({ dispose: () => undefined }),
+  showInformationMessage: () => Promise.resolve(undefined),
+};
+
+export const workspace = {
+  workspaceFolders: [],
+  getConfiguration: () => ({
+    get: <T>(_key: string, defaultValue: T) => defaultValue,
+    update: () => Promise.resolve(undefined),
+  }),
+  onDidChangeTextDocument: () => ({ dispose: () => undefined }),
+  onDidSaveTextDocument: () => ({ dispose: () => undefined }),
+  onDidChangeConfiguration: () => ({ dispose: () => undefined }),
+};
+
+export const commands = {
+  registerCommand: () => ({ dispose: () => undefined }),
+};

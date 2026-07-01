@@ -1,0 +1,117 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  normalizeProbabilisticConfig,
+  type ProbabilisticConfig,
+} from "../../src/engine/tolerance";
+
+import {
+  distributionFromToleranceProbabilistic,
+} from "../../src/engine/monteCarlo";
+
+describe("normalizeProbabilisticConfig", () => {
+  it("returns default gaussian when no config is provided", () => {
+    const cfg = normalizeProbabilisticConfig();
+    expect(cfg.mode).toBe("gaussian");
+    expect(cfg.sigma).toBe(3);
+    expect(cfg.solver).toBe("monte_carlo");
+  });
+
+  it("returns default gaussian for empty config", () => {
+    const cfg = normalizeProbabilisticConfig({});
+    expect(cfg.mode).toBe("gaussian");
+    expect(cfg.sigma).toBe(3);
+  });
+
+  it("preserves rss mode, ignores sigma", () => {
+    const cfg = normalizeProbabilisticConfig({
+      mode: "rss",
+      sigma: 10,
+    } satisfies ProbabilisticConfig);
+    expect(cfg.mode).toBe("rss");
+    // sigma still uses fallback since rss ignores it
+    expect(cfg.sigma).toBe(3);
+  });
+
+  it("preserves worst_case mode", () => {
+    const cfg = normalizeProbabilisticConfig({
+      mode: "worst_case",
+    } satisfies ProbabilisticConfig);
+    expect(cfg.mode).toBe("worst_case");
+    expect(cfg.sigma).toBe(3);
+  });
+
+  it("preserves gaussian with custom sigma", () => {
+    const cfg = normalizeProbabilisticConfig({
+      mode: "gaussian",
+      sigma: 6,
+    } satisfies ProbabilisticConfig);
+    expect(cfg.mode).toBe("gaussian");
+    expect(cfg.sigma).toBe(6);
+  });
+});
+
+describe("distributionFromToleranceProbabilistic", () => {
+  it("returns rectangular distribution for rss mode", () => {
+    const dist = distributionFromToleranceProbabilistic({
+      min: 10,
+      max: 20,
+      nominal: 15,
+      probabilistic: { mode: "rss" },
+    });
+    expect(dist.kind).toBe("rectangular");
+    if (dist.kind === "rectangular") {
+      expect(dist.min).toBe(10);
+      expect(dist.max).toBe(20);
+    }
+  });
+
+  it("returns gaussian distribution for gaussian mode", () => {
+    const dist = distributionFromToleranceProbabilistic({
+      min: 10,
+      max: 20,
+      nominal: 15,
+      probabilistic: { mode: "gaussian", sigma: 3 },
+    });
+    expect(dist.kind).toBe("gaussian");
+    if (dist.kind === "gaussian") {
+      expect(dist.mean).toBe(15);
+      // sigma = (20-10)/(2*3) = 1.667
+      expect(dist.sigma).toBeCloseTo(1.667, 2);
+    }
+  });
+
+  it("returns rectangular for worst_case mode", () => {
+    const dist = distributionFromToleranceProbabilistic({
+      min: 10,
+      max: 20,
+      nominal: 15,
+      probabilistic: { mode: "worst_case" },
+    });
+    expect(dist.kind).toBe("rectangular");
+    if (dist.kind === "rectangular") {
+      expect(dist.min).toBe(10);
+      expect(dist.max).toBe(20);
+    }
+  });
+
+  it("defaults to gaussian when mode is missing", () => {
+    const dist = distributionFromToleranceProbabilistic({
+      min: 0,
+      max: 10,
+      nominal: 5,
+      probabilistic: {},
+    });
+    // default → gaussian
+    expect(dist.kind).toBe("gaussian");
+  });
+
+  it("defaults to gaussian when probabilistic config is missing", () => {
+    const dist = distributionFromToleranceProbabilistic({
+      min: 0,
+      max: 10,
+      nominal: 5,
+    });
+    expect(dist.kind).toBe("gaussian");
+  });
+});
